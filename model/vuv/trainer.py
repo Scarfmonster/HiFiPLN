@@ -58,7 +58,7 @@ class VUVTrainer(pl.LightningModule):
         return mels
 
     def training_step(self, batch, batch_idx):
-        optim_e = self.optimizers()
+        optim = self.optimizers()
 
         pitches, y, vuv = (
             batch["pitch"].float(),
@@ -68,21 +68,19 @@ class VUVTrainer(pl.LightningModule):
 
         mel_lens = batch["audio_lens"] // self.config["hop_length"]
         mels = self.get_mels(y)[:, :, : mel_lens.max()]
-        vuv_hat = self.estimator(mels)
+        gen_mels = mels + torch.rand_like(mels) * self.config.model.input_noise
+        vuv_hat = self.estimator(gen_mels)
 
         vuv = vuv[:, :, : mel_lens.max()]
         vuv_hat = vuv_hat[:, :, : mel_lens.max()]
 
         # Generator
-        optim_e.zero_grad(set_to_none=True)
+        optim.zero_grad(set_to_none=True)
 
-        # loss_vuv = F.binary_cross_entropy_with_logits(
-        #     vuv_hat[:, 0], vuv[:, 0], reduction="sum"
-        # )
-        loss_vuv = F.l1_loss(F.sigmoid(vuv_hat[:, 0]), vuv[:, 0])
+        loss_vuv = F.binary_cross_entropy_with_logits(vuv_hat[:, 0, :], vuv[:, 0, :])
 
         self.manual_backward(loss_vuv)
-        optim_e.step()
+        optim.step()
 
         self.log(
             f"train_loss",
@@ -115,7 +113,7 @@ class VUVTrainer(pl.LightningModule):
         # print("HAT", vuv_hat.shape)
         # print("MELS", mels.shape)
 
-        loss_vuv = F.binary_cross_entropy_with_logits(vuv_hat, vuv, reduction="sum")
+        loss_vuv = F.binary_cross_entropy_with_logits(vuv_hat, vuv)
         # loss_vuv = F.l1_loss(F.sigmoid(vuv_hat), vuv)
 
         self.log(
@@ -140,7 +138,7 @@ class VUVTrainer(pl.LightningModule):
                 mel_lens.cpu().numpy(),
             )
         ):
-            image_vuv = plot_x_hat(v[:mel_len], gen_v[:mel_len])
+            image_vuv = plot_x_hat(v[:mel_len], gen_v[:mel_len], "VUV", "VUV HAT")
 
             self.logger.experiment.add_figure(
                 f"sample-{idx}/vuv",

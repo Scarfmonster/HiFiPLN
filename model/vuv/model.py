@@ -18,7 +18,7 @@ class VUVEstimator(nn.Module):
         self.lrelu_slope = config.model.lrelu_slope
         self.hop_length = config.hop_length
 
-        self.pre = weight_norm(nn.Conv1d(self.n_mels, 512, 7, padding=3))
+        self.pre = weight_norm(nn.Conv1d(self.n_mels, 512, 3, padding=1))
         self.res1 = ResBlock(512, 7)
         self.conv1 = weight_norm(nn.Conv1d(512, 256, 3, padding=1))
         self.skip1 = weight_norm(nn.Conv1d(self.n_mels, 256, 1))
@@ -26,7 +26,7 @@ class VUVEstimator(nn.Module):
         self.conv2 = weight_norm(nn.Conv1d(256, 128, 3, padding=1))
         self.skip2 = weight_norm(nn.Conv1d(self.n_mels, 128, 1))
         self.res3 = ResBlock(128, 3)
-        self.post = weight_norm(nn.Conv1d(128, 1, 7, padding=3))
+        self.post = weight_norm(nn.Conv1d(128, 1, 3, padding=1))
         self.apply(init_weights)
 
     def forward(self, x):

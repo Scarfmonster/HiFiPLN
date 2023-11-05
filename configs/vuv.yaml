@@ -1,4 +1,5 @@
 type: "VUV"
+precision: "32"
 sample_rate: 44100
 f_min: 40
 f_max: 16000
@@ -6,7 +7,7 @@ n_mels: 128
 hop_length: 512
 win_length: 2048
 n_fft: 2048
-lr: 0.0004
+lr: 0.000001
 lr_decay: 0.999
 adam_b1: 0.8
 adam_b2: 0.99
@@ -29,19 +30,20 @@ dataloader:
   train:
     batch_size: 20
     shuffle: True
-    num_workers: 4
+    num_workers: 8
     pin_memory: True
     drop_last: True
     persistent_workers: True
   valid:
     batch_size: 2
     shuffle: False
-    num_workers: 2
+    num_workers: 4
     pin_memory: True
     drop_last: True
     persistent_workers: True
 model:
   lrelu_slope: 0.2
+  input_noise: 0.01
 preprocessing:
   f0_min: 40
   f0_max: 1400

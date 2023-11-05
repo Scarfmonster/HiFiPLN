@@ -67,7 +67,7 @@ if __name__ == "__main__":
         accelerator="gpu",
         devices=-1,
         max_epochs=-1,
-        precision="16-mixed",
+        precision=config.precision,
         val_check_interval=1000,
         check_val_every_n_epoch=None,
         num_sanity_val_steps=10,
