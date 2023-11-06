@@ -68,7 +68,7 @@ if __name__ == "__main__":
         devices=-1,
         max_epochs=-1,
         precision=config.precision,
-        val_check_interval=1000,
+        val_check_interval=config.val_check,
         check_val_every_n_epoch=None,
         num_sanity_val_steps=10,
         callbacks=[

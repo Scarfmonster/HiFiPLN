@@ -62,7 +62,7 @@ class HiFiPlnTrainer(pl.LightningModule):
 
     def configure_optimizers(self):
         optim_g = torch.optim.AdamW(
-            self.generator.parameters(),
+            filter(lambda p: p.requires_grad, self.generator.parameters()),
             lr=self.config.lr,
             betas=(self.config.adam_b1, self.config.adam_b2),
         )
@@ -110,24 +110,16 @@ class HiFiPlnTrainer(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         optim_g, optim_d = self.optimizers()
 
-        pitches, y, vuv = (
+        pitches, y = (
             batch["pitch"].float(),
             batch["audio"].float(),
-            batch["vuv"].float(),
         )
 
         mel_lens = batch["audio_lens"] // self.config["hop_length"]
         mels = self.get_mels(y)[:, :, : mel_lens.max()]
         gen_mels = mels + torch.rand_like(mels) * self.config.model.input_noise
-        y_g_hat, vuv_hat, power_hat = self.generator(gen_mels, pitches)
+        y_g_hat = self.generator(gen_mels, pitches)
         y_g_hat_mel = self.get_mels(y_g_hat)[:, :, : mel_lens.max()]
-
-        vuv = vuv[:, :, : mel_lens.max()]
-        vuv_hat = vuv_hat[:, :, : mel_lens.max()]
-
-        power = self.extract_envelope(y, 1024, 512, 256)
-        power = power[:, :, : mel_lens.max()]
-        power_hat = power_hat[:, :, : mel_lens.max()]
 
         # Discriminator Loss
         optim_d.zero_grad(set_to_none=True)
@@ -222,44 +214,17 @@ class HiFiPlnTrainer(pl.LightningModule):
         loss_fm_s = feature_loss(fmap_s_r, fmap_s_g)
         loss_gen_f, _ = generator_loss(y_df_hat_g)
         loss_gen_s, _ = generator_loss(y_ds_hat_g)
-        loss_vuv = F.binary_cross_entropy_with_logits(vuv_hat[:, 0, :], vuv[:, 0, :])
-        loss_power = F.mse_loss(power_hat[:, 0, :], power[:, 0, :]) * 4
-        # loss_power = F.binary_cross_entropy_with_logits(
-        #     power_hat[:, 0, :], power[:, 0, :]
-        # )
         loss_gen_all = (
             loss_gen_s
             + loss_gen_f
             + loss_fm_s
             + loss_fm_f
             + loss_envelope
-            + loss_vuv
-            + loss_power
             + loss_aux * 45
         )
 
         self.manual_backward(loss_gen_all)
         optim_g.step()
-
-        self.log(
-            "train_vuv_loss",
-            loss_vuv,
-            on_step=True,
-            on_epoch=True,
-            prog_bar=False,
-            sync_dist=True,
-            batch_size=pitches.shape[0],
-        )
-
-        self.log(
-            "train_power_loss",
-            loss_power,
-            on_step=True,
-            on_epoch=True,
-            prog_bar=False,
-            sync_dist=True,
-            batch_size=pitches.shape[0],
-        )
 
         self.log(
             f"train_loss_gen",
@@ -279,21 +244,13 @@ class HiFiPlnTrainer(pl.LightningModule):
             scheduler_d.step()
 
     def validation_step(self, batch, batch_idx):
-        pitches, audios, vuv = (batch["pitch"], batch["audio"], batch["vuv"])
+        pitches, audios = (batch["pitch"], batch["audio"])
 
         mel_lens = batch["audio_lens"] // self.config.hop_length
 
         mels = self.get_mels(audios)[:, :, : mel_lens.max()]
-        y_g_hat, vuv_hat, power_hat = self.generator(mels, pitches)
+        y_g_hat = self.generator(mels, pitches)
         y_g_hat_mel = self.get_mels(y_g_hat)[:, :, : mel_lens.max()]
-
-        vuv = vuv[:, 0, : mel_lens.max()]
-        vuv_hat = vuv_hat[:, 0, : mel_lens.max()]
-
-        # power = self.extract_envelope(audios, 1024, 512, 256)
-        power = self.extract_envelope(audios, 512, 512, 0)
-        power = power[:, 0, : mel_lens.max()]
-        power_hat = power_hat[:, 0, : mel_lens.max()]
 
         # L1 Mel-Spectrogram Loss
         # create mask
@@ -301,31 +258,6 @@ class HiFiPlnTrainer(pl.LightningModule):
             torch.arange(mels.shape[2], device=mels.device)[None, :] < mel_lens[:, None]
         )
         mask = mask[:, None].float()
-
-        loss_vuv = F.binary_cross_entropy_with_logits(vuv_hat * mask, vuv * mask)
-        self.log(
-            "valid_vuv_loss",
-            loss_vuv,
-            on_step=True,
-            on_epoch=True,
-            prog_bar=False,
-            logger=True,
-            sync_dist=True,
-            batch_size=pitches.shape[0],
-        )
-
-        loss_power = F.mse_loss(power_hat * mask, power * mask) * 4
-        # loss_power = F.binary_cross_entropy_with_logits(power_hat * mask, power * mask)
-        self.log(
-            "valid_power_loss",
-            loss_power,
-            on_step=True,
-            on_epoch=True,
-            prog_bar=False,
-            logger=True,
-            sync_dist=True,
-            batch_size=pitches.shape[0],
-        )
 
         loss_mel = F.l1_loss(mels * mask, y_g_hat_mel * mask)
         self.log(
@@ -344,10 +276,6 @@ class HiFiPlnTrainer(pl.LightningModule):
             gen_mel,
             audio,
             gen_audio,
-            v,
-            gen_v,
-            power,
-            gen_power,
             mel_len,
             audio_len,
         ) in enumerate(
@@ -356,10 +284,6 @@ class HiFiPlnTrainer(pl.LightningModule):
                 y_g_hat_mel.cpu().numpy(),
                 audios.cpu().type(torch.float32).numpy(),
                 y_g_hat.type(torch.float32).cpu().numpy(),
-                vuv.type(torch.float32).cpu().numpy(),
-                F.sigmoid(vuv_hat).type(torch.float32).cpu().numpy(),
-                power.type(torch.float32).cpu().numpy(),
-                power_hat.type(torch.float32).cpu().numpy(),
                 mel_lens.cpu().numpy(),
                 batch["audio_lens"].cpu().numpy(),
             )
@@ -371,46 +295,10 @@ class HiFiPlnTrainer(pl.LightningModule):
                 ],
                 ["Sampled Spectrogram", "Ground-Truth Spectrogram"],
             )
-            image_vuvs = plot_x_hat(v[:mel_len], gen_v[:mel_len], "VUV", "VUV HAT")
-
-            image_powers = plot_x_hat(
-                power[:mel_len], gen_power[:mel_len], "POWER", "POWER HAT"
-            )
-
-            image_mel_vuv = plot_mel_params(
-                mel[:, :mel_len], v[:mel_len], gen_v[:mel_len], "VUV", "VUV HAT"
-            )
-            image_mel_power = plot_mel_params(
-                mel[:, :mel_len],
-                power[:mel_len],
-                gen_power[:mel_len],
-                "POWER",
-                "POWER HAT",
-            )
 
             self.logger.experiment.add_figure(
                 f"sample-{idx}/mels",
                 image_mels,
-                global_step=self.global_step // 2,
-            )
-            self.logger.experiment.add_figure(
-                f"sample-{idx}/vuv",
-                image_vuvs,
-                global_step=self.global_step // 2,
-            )
-            self.logger.experiment.add_figure(
-                f"sample-{idx}/power",
-                image_powers,
-                global_step=self.global_step // 2,
-            )
-            self.logger.experiment.add_figure(
-                f"sample-{idx}/mel_vuv",
-                image_mel_vuv,
-                global_step=self.global_step // 2,
-            )
-            self.logger.experiment.add_figure(
-                f"sample-{idx}/mel_power",
-                image_mel_power,
                 global_step=self.global_step // 2,
             )
             self.logger.experiment.add_audio(
@@ -427,10 +315,6 @@ class HiFiPlnTrainer(pl.LightningModule):
             )
 
             plt.close(image_mels)
-            plt.close(image_vuvs)
-            plt.close(image_powers)
-            plt.close(image_mel_vuv)
-            plt.close(image_mel_power)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         pitches, audios = (batch["pitch"].float(), batch["audio"].float())

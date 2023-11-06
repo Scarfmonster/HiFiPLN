@@ -85,7 +85,9 @@ class HiFiPLN(nn.Module):
         self.conv_post.apply(init_weights)
 
         self.vuv = VUVEstimator(config)
+        self.load_vuv(config.model.vuv_ckpt)
         self.power = PowerEstimator(config)
+        self.load_power(config.model.power_ckpt)
 
     def forward(self, x, f0):
         if f0.ndim == 2:
@@ -95,8 +97,9 @@ class HiFiPLN(nn.Module):
             f0, size=x.shape[-1] * self.hop_length, mode="linear"
         ).transpose(1, 2)
 
-        vuv = self.vuv(x)
-        power = self.power(x)
+        with torch.no_grad():
+            vuv = self.vuv(x)
+            power = self.power(x)
 
         source = self.source(f0, power, vuv)
         source = source.transpose(1, 2)
@@ -122,7 +125,35 @@ class HiFiPLN(nn.Module):
         x = self.conv_post(x)
         x = torch.tanh(x)
 
-        return x, vuv, power
+        return x
+
+    def load_vuv(self, ckpt_path):
+        cp_dict = torch.load(ckpt_path, map_location="cpu")
+
+        self.vuv.load_state_dict(
+            {
+                k.replace("estimator.", ""): v
+                for k, v in cp_dict["state_dict"].items()
+                if k.startswith("estimator.")
+            }
+        )
+
+        for param in self.vuv.parameters():
+            param.requires_grad = False
+
+    def load_power(self, ckpt_path):
+        cp_dict = torch.load(ckpt_path, map_location="cpu")
+
+        self.power.load_state_dict(
+            {
+                k.replace("power_estimator.", ""): v
+                for k, v in cp_dict["state_dict"].items()
+                if k.startswith("power_estimator.")
+            }
+        )
+
+        for param in self.power.parameters():
+            param.requires_grad = False
 
     def remove_parametrizations(self):
         param = 0
