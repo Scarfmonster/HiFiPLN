@@ -22,6 +22,7 @@ class VocoderDataset(Dataset):
         self.window_length = self.config.win_length
         self.pitch_shift = self.config.dataset[split].pitch_shift
         self.loudness_shift = self.config.dataset[split].loudness_shift
+        self.return_vuv = self.config.dataset[split].get("return_vuv", False)
 
         self.spectogram_extractor = MelSpectrogram(
             sample_rate=config.sample_rate,
@@ -78,13 +79,18 @@ class VocoderDataset(Dataset):
         )
 
         if self.segment_length and audio.shape[-1] > self.segment_length:
-            total_hops = (audio.shape[-1] - self.segment_length + 1) // self.hop_length
-            hop = np.random.randint(0, total_hops)
-            start = hop * self.hop_length
+            if self.return_vuv:
+                total_hops = (
+                    audio.shape[-1] - self.segment_length + 1
+                ) // self.hop_length
+                hop = np.random.randint(0, total_hops)
+                start = hop * self.hop_length
+            else:
+                start = np.random.randint(0, audio.shape[-1] - self.segment_length + 1)
             audio = audio[start : start + self.segment_length]
             pitch = pitch[start : start + self.segment_length]
 
-            if vuv is not None:
+            if self.return_vuv and vuv is not None:
                 vuv = vuv[hop : hop + (self.segment_length // self.hop_length)]
 
         max_loudness = np.max(np.abs(audio))
@@ -106,7 +112,7 @@ class VocoderDataset(Dataset):
         # mel = self.spectogram_extractor(audio.unsqueeze(0)).squeeze()
         data = {"audio": audio, "pitch": pitch}
 
-        if vuv is not None:
+        if self.return_vuv and vuv is not None:
             data["vuv"] = vuv[None]
         return data
 
