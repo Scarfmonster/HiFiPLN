@@ -52,24 +52,11 @@ class PowerTrainer(pl.LightningModule):
 
     @staticmethod
     def extract_envelope(signal, kernel_size=100, stride=50, padding=0):
+        signal = F.pad(signal, (kernel_size // 2, kernel_size // 2), mode="reflect")
         envelope = F.max_pool1d(
             signal, kernel_size=kernel_size, stride=stride, padding=padding
         )
         return envelope
-
-    @staticmethod
-    def generator_envelope_loss(y, y_hat):
-        y_envelope = PowerEstimator.extract_envelope(y)
-        y_hat_envelope = PowerEstimator.extract_envelope(y_hat)
-
-        y_reverse_envelope = PowerEstimator.extract_envelope(-y)
-        y_hat_reverse_envelope = PowerEstimator.extract_envelope(-y_hat)
-
-        loss_envelope = F.l1_loss(y_envelope, y_hat_envelope) + F.l1_loss(
-            y_reverse_envelope, y_hat_reverse_envelope
-        )
-
-        return loss_envelope
 
     def get_mels(self, x):
         mels = self.spectogram_extractor.to(x.device, non_blocking=True)(x.squeeze(1))
@@ -86,7 +73,8 @@ class PowerTrainer(pl.LightningModule):
         gen_mels = mels + torch.rand_like(mels) * self.config.model.input_noise
         power_hat = self.power_estimator(gen_mels)
 
-        power = self.extract_envelope(y, 2048, 512, 1024)
+        power = self.extract_envelope(y, 512, 512)
+
         power = power[:, :, : mel_lens.max()]
         power_hat = power_hat[:, :, : mel_lens.max()]
 
@@ -100,7 +88,7 @@ class PowerTrainer(pl.LightningModule):
             loss_power,
             on_step=True,
             on_epoch=True,
-            prog_bar=False,
+            prog_bar=True,
             sync_dist=True,
             batch_size=y.shape[0],
         )
@@ -118,7 +106,7 @@ class PowerTrainer(pl.LightningModule):
         mels = self.get_mels(audios)[:, :, : mel_lens.max()]
         power_hat = self.power_estimator(mels)
 
-        power = self.extract_envelope(audios, 1024, 512, 256)
+        power = self.extract_envelope(audios, 512, 512)
         power = power[:, 0, : mel_lens.max()]
         power_hat = power_hat[:, 0, : mel_lens.max()]
 
@@ -168,20 +156,13 @@ class PowerTrainer(pl.LightningModule):
             self.logger.experiment.add_figure(
                 f"sample-{idx}/power",
                 image_powers,
-                global_step=self.global_step // 2,
+                global_step=self.global_step,
             )
             self.logger.experiment.add_figure(
                 f"sample-{idx}/mel_power",
                 image_mel_power,
-                global_step=self.global_step // 2,
+                global_step=self.global_step,
             )
 
             plt.close(image_powers)
             plt.close(image_mel_power)
-
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        pitches, audios = (batch["pitch"].float(), batch["audio"].float())
-        mel_lens = batch["audio_lens"] // self.config.hop_length
-        mels = self.get_mels(audios)[:, :, : mel_lens.max()]
-
-        return self.power_estimator(mels, pitches)

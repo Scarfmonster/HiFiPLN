@@ -17,8 +17,8 @@ class PowerEstimator(nn.Module):
         self.lrelu_slope = config.model.lrelu_slope
         self.hop_length = config.hop_length
 
-        self.pre = weight_norm(nn.Conv1d(self.n_mels, 512, 7, padding=3))
-        self.res1 = ResBlock(512, 7)
+        self.pre = weight_norm(nn.Conv1d(self.n_mels, 512, 3, padding=1))
+        self.res1 = ResBlock(512, 3)
         self.conv1 = weight_norm(nn.Conv1d(512, 256, 3, padding=1))
         self.skip1 = weight_norm(nn.Conv1d(self.n_mels, 256, 3, padding=1))
         self.res2 = ResBlock(256, 3)
@@ -27,8 +27,8 @@ class PowerEstimator(nn.Module):
         self.res3 = ResBlock(128, 3)
         self.conv3 = weight_norm(nn.Conv1d(128, 64, 3, padding=1))
         self.skip3 = weight_norm(nn.Conv1d(self.n_mels, 64, 3, padding=1))
-        self.res4 = ResBlock(64, 7)
-        self.post = weight_norm(nn.Conv1d(64, 1, 7, padding=3))
+        self.res4 = ResBlock(64, 3)
+        self.post = weight_norm(nn.Conv1d(64, 1, 3, padding=1))
         self.apply(init_weights)
 
     def forward(self, x):
