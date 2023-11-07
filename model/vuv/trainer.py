@@ -1,23 +1,17 @@
 import itertools
 
 import lightning as pl
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn.functional as F
-from .model import VUVEstimator
-from model.hifigan.hifigan import (
-    MultiPeriodDiscriminator,
-    MultiScaleDiscriminator,
-    discriminator_loss,
-    feature_loss,
-    generator_loss,
-    dynamic_range_compression,
-)
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from omegaconf import DictConfig
-from torchaudio.transforms import MelSpectrogram
-import matplotlib.pyplot as plt
-from ..utils import plot_mel, plot_x_hat
-import numpy as np
+
+from model.hifigan.hifigan import dynamic_range_compression
+
+from ..utils import get_mel_transform, plot_mel, plot_x_hat
+from .model import VUVEstimator
 
 
 class VUVTrainer(pl.LightningModule):
@@ -27,7 +21,7 @@ class VUVTrainer(pl.LightningModule):
 
         self.estimator = VUVEstimator(config)
 
-        self.spectogram_extractor = MelSpectrogram(
+        self.spectogram_extractor = get_mel_transform(
             sample_rate=config.sample_rate,
             n_fft=config.n_fft,
             win_length=config.win_length,
@@ -109,12 +103,7 @@ class VUVTrainer(pl.LightningModule):
         vuv = vuv[:, 0, : mel_lens.max()]
         vuv_hat = vuv_hat[:, 0, : mel_lens.max()]
 
-        # print("VUV", vuv.shape)
-        # print("HAT", vuv_hat.shape)
-        # print("MELS", mels.shape)
-
         loss_vuv = F.binary_cross_entropy_with_logits(vuv_hat, vuv)
-        # loss_vuv = F.l1_loss(F.sigmoid(vuv_hat), vuv)
 
         self.log(
             "valid_loss",
@@ -143,7 +132,7 @@ class VUVTrainer(pl.LightningModule):
             self.logger.experiment.add_figure(
                 f"sample-{idx}/vuv",
                 image_vuv,
-                global_step=self.global_step // 2,
+                global_step=self.global_step,
             )
 
             plt.close(image_vuv)

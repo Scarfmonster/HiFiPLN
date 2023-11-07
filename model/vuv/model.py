@@ -19,7 +19,7 @@ class VUVEstimator(nn.Module):
         self.hop_length = config.hop_length
 
         self.pre = weight_norm(nn.Conv1d(self.n_mels, 512, 3, padding=1))
-        self.res1 = ResBlock(512, 7)
+        self.res1 = ResBlock(512, 3)
         self.conv1 = weight_norm(nn.Conv1d(512, 256, 3, padding=1))
         self.skip1 = weight_norm(nn.Conv1d(self.n_mels, 256, 1))
         self.res2 = ResBlock(256, 3)

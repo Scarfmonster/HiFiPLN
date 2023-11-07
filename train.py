@@ -23,37 +23,6 @@ torch.backends.cudnn.allow_tf32 = True
 if __name__ == "__main__":
     pl.seed_everything(0, workers=True)
 
-    # def stft(
-    #     input: torch.Tensor,
-    #     n_fft: int,
-    #     hop_length: int | None = None,
-    #     win_length: int | None = None,
-    #     window: torch.Tensor | None = None,
-    #     center: bool = True,
-    #     pad_mode: str = "reflect",
-    #     normalized: bool = False,
-    #     onesided: bool | None = None,
-    #     return_complex: bool | None = True,
-    # ) -> torch.Tensor:
-    #     dtype = input.dtype
-    #     input = input.float()
-    #     if window is not None:
-    #         window = window.float()
-    #     return torch.functional.stft(
-    #         input,
-    #         n_fft,
-    #         hop_length,
-    #         win_length,
-    #         window,
-    #         center,
-    #         pad_mode,
-    #         normalized,
-    #         onesided,
-    #         return_complex,
-    #     )
-
-    # torch.stft = stft
-
     argparser = argparse.ArgumentParser()
     argparser.add_argument("--config", type=str, required=True)
     argparser.add_argument("--resume", type=str, default=None)
@@ -62,6 +31,39 @@ if __name__ == "__main__":
     args = argparser.parse_args()
 
     config = OmegaConf.load(args.config)
+
+    if config.precision.startswith("bf16"):
+
+        def stft(
+            input: torch.Tensor,
+            n_fft: int,
+            hop_length: int | None = None,
+            win_length: int | None = None,
+            window: torch.Tensor | None = None,
+            center: bool = True,
+            pad_mode: str = "reflect",
+            normalized: bool = False,
+            onesided: bool | None = None,
+            return_complex: bool | None = True,
+        ) -> torch.Tensor:
+            dtype = input.dtype
+            input = input.float()
+            if window is not None:
+                window = window.float()
+            return torch.functional.stft(
+                input,
+                n_fft,
+                hop_length,
+                win_length,
+                window,
+                center,
+                pad_mode,
+                normalized,
+                onesided,
+                return_complex,
+            )
+
+        torch.stft = stft
 
     trainer = pl.Trainer(
         accelerator="gpu",
