@@ -72,7 +72,7 @@ if __name__ == "__main__":
         precision=config.precision,
         val_check_interval=config.val_check,
         check_val_every_n_epoch=None,
-        num_sanity_val_steps=10,
+        # num_sanity_val_steps=10,
         callbacks=[
             ModelCheckpoint(
                 filename="{epoch}-{step}-{valid_loss:.4f}",

@@ -26,12 +26,16 @@ class VUVEstimator(nn.Module):
         self.conv2 = weight_norm(nn.Conv1d(256, 128, 3, padding=1))
         self.skip2 = weight_norm(nn.Conv1d(self.n_mels, 128, 1))
         self.res3 = ResBlock(128, 3)
-        self.post = weight_norm(nn.Conv1d(128, 1, 3, padding=1))
+        self.conv3 = weight_norm(nn.Conv1d(128, 64, 3, padding=1))
+        self.skip3 = weight_norm(nn.Conv1d(self.n_mels, 64, 3, padding=1))
+        self.res4 = ResBlock(64, 3)
+        self.post = weight_norm(nn.Conv1d(64, 1, 3, padding=1))
         self.apply(init_weights)
 
     def forward(self, x):
         s1 = self.skip1(x)
         s2 = self.skip2(x)
+        s3 = self.skip3(x)
         x = self.pre(x)
         x = self.res1(x)
         x = F.leaky_relu(x, self.lrelu_slope, inplace=True)
@@ -42,7 +46,13 @@ class VUVEstimator(nn.Module):
         x = F.leaky_relu(x, self.lrelu_slope, inplace=True)
         x = self.conv2(x)
         x = x + s2
+        x = F.leaky_relu(x, self.lrelu_slope, inplace=True)
         x = self.res3(x)
+        x = F.leaky_relu(x, self.lrelu_slope, inplace=True)
+        x = self.conv3(x)
+        x = x + s3
+        x = F.leaky_relu(x, self.lrelu_slope, inplace=True)
+        x = self.res4(x)
         x = self.post(x)
 
         return x
