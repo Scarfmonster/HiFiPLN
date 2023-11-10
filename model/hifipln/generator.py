@@ -10,7 +10,7 @@ from model.common import ResBlock
 from model.power.model import PowerEstimator
 from model.vuv.model import VUVEstimator
 
-from ..utils import get_padding, init_weights
+from ..utils import init_weights
 
 
 class HiFiPLN(nn.Module):
@@ -125,7 +125,7 @@ class HiFiPLN(nn.Module):
         x = self.conv_post(x)
         x = torch.tanh(x)
 
-        return x
+        return x, vuv, power
 
     def load_vuv(self, ckpt_path):
         cp_dict = torch.load(ckpt_path, map_location="cpu")

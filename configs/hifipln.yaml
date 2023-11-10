@@ -1,6 +1,6 @@
 type: "HiFiPLN"
 precision: "16-mixed"
-val_check: 100
+val_check: 2000
 sample_rate: 44100
 f_min: 40
 f_max: 16000
@@ -8,7 +8,7 @@ n_mels: 128
 hop_length: 512
 win_length: 2048
 n_fft: 2048
-lr: 0.0002
+lr: 0.0004
 lr_decay: 0.99
 adam_b1: 0.8
 adam_b2: 0.99
@@ -55,7 +55,14 @@ model:
     - [1, 3, 5]
     - [1, 3, 5]
     - [1, 3, 5]
-  discriminator_periods:  [3, 5, 7, 11, 17, 23, 37]
+mpd:
+  periods:  [2, 3, 5, 7, 11]
+  kernel_size: 5
+  stride: 3
+  lrelu_slope: 0.2
+mrd:
+  resolutions: [[1024, 120, 600], [2048, 240, 1200], [512, 50, 240]] # (filter_length, hop_length, win_length)
+  lrelu_slope: 0.2
 preprocessing:
   f0_min: 40
   f0_max: 1400

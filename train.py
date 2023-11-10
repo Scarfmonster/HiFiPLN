@@ -1,7 +1,6 @@
 import argparse
 
 import lightning as pl
-import soundfile
 import torch
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
@@ -10,11 +9,9 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
 from data import VocoderDataset, collate_fn
-from model.hifigan.hifigan import dynamic_range_compression
 from model.hifigan.trainer import HiFiGanTrainer
 from model.hifipln.trainer import HiFiPlnTrainer
 from model.power.trainer import PowerTrainer
-from model.utils import get_mel_transform
 from model.vuv.trainer import VUVTrainer
 
 torch.set_float32_matmul_precision("medium")
@@ -75,7 +72,7 @@ if __name__ == "__main__":
         # num_sanity_val_steps=10,
         callbacks=[
             ModelCheckpoint(
-                filename="{epoch}-{step}-{valid_loss:.4f}",
+                filename="{epoch}-{step}",
                 save_on_train_epoch_end=False,
                 save_top_k=-1,
             ),

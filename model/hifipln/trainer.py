@@ -2,22 +2,19 @@ import itertools
 from typing import Any
 
 import lightning as pl
+import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
-from .generator import HiFiPLN
-from model.hifigan.hifigan import (
-    MultiPeriodDiscriminator,
-    MultiScaleDiscriminator,
-    discriminator_loss,
-    feature_loss,
-    generator_loss,
-    dynamic_range_compression,
-)
 from omegaconf import DictConfig
 
-# from torchaudio.transforms import MelSpectrogram
-import matplotlib.pyplot as plt
-from ..utils import plot_mel, plot_x_hat, plot_mel_params, get_mel_transform
+from model.hifigan.hifigan import dynamic_range_compression
+from model.hifipln.discriminator import (
+    MultiPeriodDiscriminator,
+    MultiResolutionDiscriminator,
+)
+
+from ..utils import get_mel_transform, plot_mel
+from .generator import HiFiPLN
 
 
 class HiFiPlnTrainer(pl.LightningModule):
@@ -28,25 +25,10 @@ class HiFiPlnTrainer(pl.LightningModule):
         self.save_hyperparameters(logger=False)
 
         self.generator = HiFiPLN(config)
-        self.msd = MultiScaleDiscriminator(config)
         self.mpd = MultiPeriodDiscriminator(config)
+        self.mrd = MultiResolutionDiscriminator(config)
 
-        self.multi_scale_mels = [
-            get_mel_transform(
-                sample_rate=config.sample_rate,
-                n_fft=n_fft,
-                win_length=win_length,
-                hop_length=hop_length,
-                f_min=0,
-                f_max=config.sample_rate // 2,
-                n_mels=config.n_mels,
-            )
-            for (n_fft, win_length, hop_length) in [
-                (config.n_fft, config.win_length, config.hop_length),
-                (2048, 1080, 270),
-                (4096, 2160, 540),
-            ]
-        ]
+        self.stft_config = config.mrd.resolutions
 
         self.spectogram_extractor = get_mel_transform(
             sample_rate=config.sample_rate,
@@ -67,7 +49,7 @@ class HiFiPlnTrainer(pl.LightningModule):
             betas=(self.config.adam_b1, self.config.adam_b2),
         )
         optim_d = torch.optim.AdamW(
-            itertools.chain(self.msd.parameters(), self.mpd.parameters()),
+            itertools.chain(self.mrd.parameters(), self.mpd.parameters()),
             lr=self.config.lr,
             betas=(self.config.adam_b1, self.config.adam_b2),
         )
@@ -102,6 +84,36 @@ class HiFiPlnTrainer(pl.LightningModule):
 
         return loss_envelope
 
+    def stft_loss(self, audio, gen_audio, mel_lens=None):
+        loss_stft = 0.0
+        for n_fft, hop_length, win_length in self.stft_config:
+            audio_stft = torch.stft(
+                audio.squeeze(1),
+                n_fft,
+                hop_length,
+                win_length,
+                return_complex=True,
+                window=torch.hann_window(win_length, device=audio.device),
+            )
+            gen_audio_stft = torch.stft(
+                gen_audio.squeeze(1),
+                n_fft,
+                hop_length,
+                win_length,
+                return_complex=True,
+                window=torch.hann_window(win_length, device=gen_audio.device),
+            )
+            audio_stft = torch.view_as_real(audio_stft)
+            gen_audio_stft = torch.view_as_real(gen_audio_stft)
+
+            if mel_lens is not None:
+                audio_stft = audio_stft[:, :, : mel_lens.max()]
+                gen_audio_stft = gen_audio_stft[:, :, : mel_lens.max()]
+
+            loss_stft += F.l1_loss(audio_stft, gen_audio_stft)
+
+        return loss_stft
+
     def get_mels(self, x):
         mels = self.spectogram_extractor.to(x.device, non_blocking=True)(x.squeeze(1))
         mels = dynamic_range_compression(mels)
@@ -110,127 +122,148 @@ class HiFiPlnTrainer(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         optim_g, optim_d = self.optimizers()
 
-        pitches, y = (
+        pitches, audio = (
             batch["pitch"].float(),
             batch["audio"].float(),
         )
 
         mel_lens = batch["audio_lens"] // self.config["hop_length"]
-        mels = self.get_mels(y)[:, :, : mel_lens.max()]
+        mels = self.get_mels(audio)[:, :, : mel_lens.max()]
         gen_mels = mels + torch.rand_like(mels) * self.config.model.input_noise
-        y_g_hat = self.generator(gen_mels, pitches)
-        y_g_hat_mel = self.get_mels(y_g_hat)[:, :, : mel_lens.max()]
+        gen_audio, _, _ = self.generator(gen_mels, pitches)
+        gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
 
-        # Discriminator Loss
-        optim_d.zero_grad(set_to_none=True)
+        # Generator
+        optim_g.zero_grad(set_to_none=True)
 
-        # MPD
-        y_df_hat_r, y_df_hat_g, _, _ = self.mpd(y, y_g_hat.detach())
-        loss_disc_f, _, _ = discriminator_loss(y_df_hat_r, y_df_hat_g)
+        real_mpd = self.mpd(audio)
+        real_mrd = self.mrd(audio)
+        gen_mpd = self.mpd(gen_audio)
+        gen_mrd = self.mrd(gen_audio)
 
-        # MSD
-        y_ds_hat_r, y_ds_hat_g, _, _ = self.msd(y, y_g_hat.detach())
-        loss_disc_s, _, _ = discriminator_loss(y_ds_hat_r, y_ds_hat_g)
+        gen_loss = 0.0
+        feat_loss = 0.0
 
-        loss_disc_all = loss_disc_s + loss_disc_f
+        for (feat_fake, score_fake), (feat_real, _) in zip(
+            gen_mpd + gen_mrd, real_mpd + real_mrd
+        ):
+            f_loss = 0.0
+            for fake, real in zip(feat_fake, feat_real):
+                f_loss += F.l1_loss(fake, real.detach())
+            feat_loss += f_loss
 
-        self.manual_backward(loss_disc_all)
-        optim_d.step()
+            gen_loss += F.binary_cross_entropy_with_logits(
+                score_fake, torch.ones_like(score_fake)
+            )
+
+        feat_loss = feat_loss / len(gen_mpd)
+
+        envelope_loss = self.generator_envelope_loss(audio, gen_audio)
+
+        stft_loss = self.stft_loss(audio, gen_audio)
+        mel_loss = F.l1_loss(gen_audio_mel, mels)
+
+        feat_loss *= 2.0
+        mel_loss *= 45.0
+
+        loss_gen_all = gen_loss + feat_loss + envelope_loss + stft_loss + mel_loss
+
+        self.manual_backward(loss_gen_all)
+        optim_g.step()
 
         self.log(
-            f"train_loss_disc",
-            loss_disc_all,
+            f"train/loss_gen",
+            gen_loss,
             on_step=True,
-            on_epoch=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            f"train/loss_feat",
+            feat_loss,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            f"train/loss_envelope",
+            envelope_loss,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            f"train/loss_stft",
+            stft_loss,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            f"train/loss_mel",
+            mel_loss,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            f"train/loss_all",
+            loss_gen_all,
+            on_step=True,
+            on_epoch=False,
             prog_bar=True,
             logger=True,
             sync_dist=True,
             batch_size=pitches.shape[0],
         )
 
-        # Generator
-        optim_g.zero_grad(set_to_none=True)
+        # Discriminator Loss
+        optim_d.zero_grad(set_to_none=True)
 
-        # We referenced STFT and Mel-Spectrogram loss from SingGAN
-        # L1 STFT Loss
-        stft_config = [
-            (512, 50, 240),
-            (1024, 120, 600),
-            (2048, 240, 1200),
-        ]
+        disc_mpd_real = self.mpd(audio)
+        disc_mrd_real = self.mrd(audio)
+        disc_mpd_fake = self.mpd(gen_audio.detach())
+        disc_mrd_fake = self.mrd(gen_audio.detach())
 
-        loss_stft = 0
-        for n_fft, hop_length, win_length in stft_config:
-            y_stft = torch.stft(
-                y.squeeze(1),
-                n_fft,
-                hop_length,
-                win_length,
-                return_complex=True,
-                window=torch.hann_window(win_length, device=y.device),
+        loss_d = 0.0
+        for (_, score_fake), (_, score_real) in zip(
+            disc_mrd_fake + disc_mpd_fake, disc_mrd_real + disc_mpd_real
+        ):
+            loss_d += F.binary_cross_entropy_with_logits(
+                score_real, torch.ones_like(score_real)
             )
-            y_g_hat_stft = torch.stft(
-                y_g_hat.squeeze(1),
-                n_fft,
-                hop_length,
-                win_length,
-                return_complex=True,
-                window=torch.hann_window(win_length, device=y_g_hat.device),
+            loss_d += F.binary_cross_entropy_with_logits(
+                score_fake, torch.zeros_like(score_fake)
             )
-            y_stft = torch.view_as_real(y_stft)
-            y_g_hat_stft = torch.view_as_real(y_g_hat_stft)
 
-            loss_stft += F.l1_loss(y_stft, y_g_hat_stft)
-
-        loss_stft /= len(stft_config)
-
-        # L1 Mel-Spectrogram Loss
-        loss_mel = 0
-        for mel_transform in self.multi_scale_mels:
-            mel_transform = mel_transform.to(y.device, non_blocking=True)
-            y_mel = dynamic_range_compression(mel_transform(y))
-            y_g_hat_mel = dynamic_range_compression(mel_transform(y_g_hat))
-            loss_mel += F.l1_loss(y_mel, y_g_hat_mel)
-
-        loss_mel /= len(self.multi_scale_mels)
-
-        loss_aux = 0.5 * loss_stft + loss_mel
-
-        # L1 Envelope Loss
-        loss_envelope = self.generator_envelope_loss(y, y_g_hat)
-        self.log(
-            "train_loss_g_envelope",
-            loss_envelope,
-            on_step=True,
-            prog_bar=False,
-            sync_dist=True,
-            batch_size=pitches.shape[0],
-        )
-
-        # Generator Loss
-        y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = self.mpd(y, y_g_hat)
-        y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = self.msd(y, y_g_hat)
-        loss_fm_f = feature_loss(fmap_f_r, fmap_f_g)
-        loss_fm_s = feature_loss(fmap_s_r, fmap_s_g)
-        loss_gen_f, _ = generator_loss(y_df_hat_g)
-        loss_gen_s, _ = generator_loss(y_ds_hat_g)
-        loss_gen_all = (
-            loss_gen_s
-            + loss_gen_f
-            + loss_fm_s
-            + loss_fm_f
-            + loss_envelope
-            + loss_aux * 45
-        )
-
-        self.manual_backward(loss_gen_all)
-        optim_g.step()
+        self.manual_backward(loss_d)
+        optim_d.step()
 
         self.log(
-            f"train_loss_gen",
-            loss_gen_all,
+            f"train/loss_disc",
+            loss_d,
             on_step=True,
-            on_epoch=True,
+            on_epoch=False,
             prog_bar=True,
             logger=True,
             sync_dist=True,
@@ -249,21 +282,43 @@ class HiFiPlnTrainer(pl.LightningModule):
         mel_lens = batch["audio_lens"] // self.config.hop_length
 
         mels = self.get_mels(audios)[:, :, : mel_lens.max()]
-        y_g_hat = self.generator(mels, pitches)
-        y_g_hat_mel = self.get_mels(y_g_hat)[:, :, : mel_lens.max()]
+        gen_audio, vuv, power = self.generator(mels, pitches)
+        gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
 
-        # L1 Mel-Spectrogram Loss
-        # create mask
-        mask = (
-            torch.arange(mels.shape[2], device=mels.device)[None, :] < mel_lens[:, None]
-        )
-        mask = mask[:, None].float()
+        vuv = vuv[:, 0, : mel_lens.max()]
+        power = power[:, 0, : mel_lens.max()]
 
-        loss_mel = F.l1_loss(mels * mask, y_g_hat_mel * mask)
+        loss_stft = self.stft_loss(audios, gen_audio, mel_lens)
+        loss_mel = F.l1_loss(mels, gen_audio_mel)
+
+        loss_valid = loss_mel + loss_stft
+
         self.log(
-            "valid_loss",
+            "valid/loss_stft",
+            loss_stft,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            "valid/loss_mel",
             loss_mel,
-            on_step=True,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            "valid/loss",
+            loss_valid,
+            on_step=False,
             on_epoch=True,
             prog_bar=True,
             logger=True,
@@ -281,9 +336,9 @@ class HiFiPlnTrainer(pl.LightningModule):
         ) in enumerate(
             zip(
                 mels.cpu().numpy(),
-                y_g_hat_mel.cpu().numpy(),
+                gen_audio_mel.cpu().numpy(),
                 audios.cpu().type(torch.float32).numpy(),
-                y_g_hat.type(torch.float32).cpu().numpy(),
+                gen_audio.type(torch.float32).cpu().numpy(),
                 mel_lens.cpu().numpy(),
                 batch["audio_lens"].cpu().numpy(),
             )
