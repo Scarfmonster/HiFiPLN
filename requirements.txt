@@ -1,0 +1,10 @@
+librosa==0.10.1
+lightning==2.1.0
+omegaconf==2.3.0
+onnx==1.14.1
+onnxscript==0.1.0.dev20231025
+soundfile==0.12.1
+tensorboard==2.14.1
+torch==2.1.0
+torchaudio==2.1.0
+tqdm==4.66.1
