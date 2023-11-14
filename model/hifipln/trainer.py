@@ -22,7 +22,7 @@ class HiFiPlnTrainer(pl.LightningModule):
         super().__init__()
         self.config = config
 
-        self.save_hyperparameters(logger=False)
+        # self.save_hyperparameters(logger=False)
 
         self.generator = HiFiPLN(config)
         self.mpd = MultiPeriodDiscriminator(config)
@@ -326,50 +326,51 @@ class HiFiPlnTrainer(pl.LightningModule):
             batch_size=pitches.shape[0],
         )
 
-        for idx, (
-            mel,
-            gen_mel,
-            audio,
-            gen_audio,
-            mel_len,
-            audio_len,
-        ) in enumerate(
-            zip(
-                mels.cpu().numpy(),
-                gen_audio_mel.cpu().numpy(),
-                audios.cpu().type(torch.float32).numpy(),
-                gen_audio.type(torch.float32).cpu().numpy(),
-                mel_lens.cpu().numpy(),
-                batch["audio_lens"].cpu().numpy(),
-            )
-        ):
-            image_mels = plot_mel(
-                [
-                    gen_mel[:, :mel_len],
-                    mel[:, :mel_len],
-                ],
-                ["Sampled Spectrogram", "Ground-Truth Spectrogram"],
-            )
+        if batch_idx == 0:
+            for idx, (
+                mel,
+                gen_mel,
+                audio,
+                gen_audio,
+                mel_len,
+                audio_len,
+            ) in enumerate(
+                zip(
+                    mels.cpu().numpy(),
+                    gen_audio_mel.cpu().numpy(),
+                    audios.cpu().type(torch.float32).numpy(),
+                    gen_audio.type(torch.float32).cpu().numpy(),
+                    mel_lens.cpu().numpy(),
+                    batch["audio_lens"].cpu().numpy(),
+                )
+            ):
+                image_mels = plot_mel(
+                    [
+                        gen_mel[:, :mel_len],
+                        mel[:, :mel_len],
+                    ],
+                    ["Sampled Spectrogram", "Ground-Truth Spectrogram"],
+                )
 
-            self.logger.experiment.add_figure(
-                f"sample-{idx}/mels",
-                image_mels,
-                global_step=self.global_step // 2,
-            )
-            self.logger.experiment.add_audio(
-                f"sample-{idx}/wavs/gt",
-                audio[0, :audio_len],
-                self.global_step // 2,
-                sample_rate=self.config.sample_rate,
-            )
-            self.logger.experiment.add_audio(
-                f"sample-{idx}/wavs/prediction",
-                gen_audio[0, :audio_len],
-                self.global_step // 2,
-                sample_rate=self.config.sample_rate,
-            )
+                self.logger.experiment.add_figure(
+                    f"sample-{idx}/mels",
+                    image_mels,
+                    global_step=self.global_step // 2,
+                )
+                self.logger.experiment.add_audio(
+                    f"sample-{idx}/wavs/gt",
+                    audio[0, :audio_len],
+                    self.global_step // 2,
+                    sample_rate=self.config.sample_rate,
+                )
+                self.logger.experiment.add_audio(
+                    f"sample-{idx}/wavs/prediction",
+                    gen_audio[0, :audio_len],
+                    self.global_step // 2,
+                    sample_rate=self.config.sample_rate,
+                )
 
-            plt.close(image_mels)
+                plt.close(image_mels)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         pitches, audios = (batch["pitch"].float(), batch["audio"].float())
