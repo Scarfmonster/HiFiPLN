@@ -87,7 +87,7 @@ class PowerTrainer(pl.LightningModule):
             "train_power_loss",
             loss_power,
             on_step=True,
-            on_epoch=True,
+            on_epoch=False,
             prog_bar=True,
             sync_dist=True,
             batch_size=y.shape[0],
@@ -120,7 +120,7 @@ class PowerTrainer(pl.LightningModule):
         self.log(
             "valid_power_loss",
             loss_power,
-            on_step=True,
+            on_step=False,
             on_epoch=True,
             prog_bar=False,
             logger=True,
@@ -128,41 +128,42 @@ class PowerTrainer(pl.LightningModule):
             batch_size=audios.shape[0],
         )
 
-        for idx, (
-            mel,
-            power,
-            gen_power,
-            mel_len,
-        ) in enumerate(
-            zip(
-                mels.cpu().numpy(),
-                power.type(torch.float32).cpu().numpy(),
-                power_hat.type(torch.float32).cpu().numpy(),
-                mel_lens.cpu().numpy(),
-            )
-        ):
-            image_powers = plot_x_hat(
-                power[:mel_len], gen_power[:mel_len], "POWER", "POWER HAT"
-            )
+        if batch_idx == 0:
+            for idx, (
+                mel,
+                power,
+                gen_power,
+                mel_len,
+            ) in enumerate(
+                zip(
+                    mels.cpu().numpy(),
+                    power.type(torch.float32).cpu().numpy(),
+                    power_hat.type(torch.float32).cpu().numpy(),
+                    mel_lens.cpu().numpy(),
+                )
+            ):
+                image_powers = plot_x_hat(
+                    power[:mel_len], gen_power[:mel_len], "POWER", "POWER HAT"
+                )
 
-            image_mel_power = plot_mel_params(
-                mel[:, :mel_len],
-                power[:mel_len],
-                gen_power[:mel_len],
-                "POWER",
-                "POWER HAT",
-            )
+                image_mel_power = plot_mel_params(
+                    mel[:, :mel_len],
+                    power[:mel_len],
+                    gen_power[:mel_len],
+                    "POWER",
+                    "POWER HAT",
+                )
 
-            self.logger.experiment.add_figure(
-                f"sample-{idx}/power",
-                image_powers,
-                global_step=self.global_step,
-            )
-            self.logger.experiment.add_figure(
-                f"sample-{idx}/mel_power",
-                image_mel_power,
-                global_step=self.global_step,
-            )
+                self.logger.experiment.add_figure(
+                    f"sample-{idx}/power",
+                    image_powers,
+                    global_step=self.global_step,
+                )
+                self.logger.experiment.add_figure(
+                    f"sample-{idx}/mel_power",
+                    image_mel_power,
+                    global_step=self.global_step,
+                )
 
-            plt.close(image_powers)
-            plt.close(image_mel_power)
+                plt.close(image_powers)
+                plt.close(image_mel_power)

@@ -1,5 +1,6 @@
 type: "Power"
-precision: "32"
+precision: "bf16-mixed"
+val_check: 5000
 sample_rate: 44100
 f_min: 40
 f_max: 16000
@@ -15,9 +16,7 @@ dataset:
   train:
     path: "dataset/train"
     segment_length: 32768
-    pitch_shift: Null
-    # loudness_shift: Null
-    # pitch_shift: [-12, 12]
+    pitch_shift: [-12, 12]
     loudness_shift: [0.25, 1.0]
   valid:
     path: "dataset/valid"
@@ -33,7 +32,7 @@ dataloader:
     drop_last: True
     persistent_workers: True
   valid:
-    batch_size: 2
+    batch_size: 4
     shuffle: False
     num_workers: 8
     pin_memory: True
@@ -41,7 +40,7 @@ dataloader:
     persistent_workers: True
 model:
   lrelu_slope: 0.2
-  input_noise: 0.01
+  input_noise: 0.00
 preprocessing:
   f0_min: 40
   f0_max: 1400
