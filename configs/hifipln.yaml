@@ -15,7 +15,7 @@ adam_b2: 0.99
 dataset:
   train:
     path: "dataset/train"
-    segment_length: 16384
+    segment_length: 32768
     pitch_shift: [-12, 12]
     loudness_shift: [0.25, 1.0]
     return_vuv: False
@@ -33,7 +33,7 @@ dataloader:
     drop_last: True
     persistent_workers: True
   valid:
-    batch_size: 2
+    batch_size: 4
     shuffle: False
     num_workers: 4
     pin_memory: True
