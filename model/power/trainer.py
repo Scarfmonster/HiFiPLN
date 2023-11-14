@@ -1,23 +1,13 @@
-import itertools
 from typing import Any
 
 import lightning as pl
+import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
-from .model import PowerEstimator
-from model.hifigan.hifigan import (
-    MultiPeriodDiscriminator,
-    MultiScaleDiscriminator,
-    discriminator_loss,
-    feature_loss,
-    generator_loss,
-    dynamic_range_compression,
-)
 from omegaconf import DictConfig
 
-# from torchaudio.transforms import MelSpectrogram
-import matplotlib.pyplot as plt
-from ..utils import plot_mel, plot_x_hat, plot_mel_params, get_mel_transform
+from ..utils import STFT, plot_mel_params, plot_x_hat
+from .model import PowerEstimator
 
 
 class PowerTrainer(pl.LightningModule):
@@ -27,7 +17,7 @@ class PowerTrainer(pl.LightningModule):
 
         self.power_estimator = PowerEstimator(config)
 
-        self.spectogram_extractor = get_mel_transform(
+        self.spectogram_extractor = STFT(
             sample_rate=config.sample_rate,
             n_fft=config.n_fft,
             win_length=config.win_length,
@@ -59,8 +49,7 @@ class PowerTrainer(pl.LightningModule):
         return envelope
 
     def get_mels(self, x):
-        mels = self.spectogram_extractor.to(x.device, non_blocking=True)(x.squeeze(1))
-        mels = dynamic_range_compression(mels)
+        mels = self.spectogram_extractor.get_mel(x.squeeze(1))
         return mels
 
     def training_step(self, batch, batch_idx):
@@ -116,7 +105,6 @@ class PowerTrainer(pl.LightningModule):
         mask = mask[:, None].float()
 
         loss_power = F.mse_loss(power_hat * mask, power * mask)
-        # loss_power = F.binary_cross_entropy_with_logits(power_hat * mask, power * mask)
         self.log(
             "valid_power_loss",
             loss_power,

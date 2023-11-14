@@ -9,13 +9,13 @@ hop_length: 512
 win_length: 2048
 n_fft: 2048
 lr: 0.000001
-lr_decay: 0.999
+lr_decay: 1.0
 adam_b1: 0.8
 adam_b2: 0.99
 dataset:
   train:
     path: "dataset/train"
-    segment_length: 32768
+    segment_length: 44032
     pitch_shift: [-12, 12]
     loudness_shift: [0.25, 1.0]
   valid:
