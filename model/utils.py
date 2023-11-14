@@ -76,6 +76,8 @@ def get_mel_transform(
         pad_mode=pad_mode,
         norm=norm,
         mel_scale=mel_scale,
+        window_fn=torch.hann_window,
+        normalized=False,
     )
 
     return transform
