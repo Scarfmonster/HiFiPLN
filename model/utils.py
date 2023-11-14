@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import torch
 from torchaudio.transforms import MelSpectrogram
+from librosa.filters import mel as librosa_mel_fn
 
 
 def plot_mel(data, titles=None):
@@ -91,3 +92,78 @@ def init_weights(m, mean=0.0, std=0.01):
 
 def get_padding(kernel_size, dilation=1):
     return int((kernel_size * dilation - dilation) / 2)
+
+
+class STFT:
+    def __init__(
+        self,
+        sample_rate=44100,
+        n_mels=128,
+        n_fft=2048,
+        win_length=2048,
+        hop_length=512,
+        f_min=40,
+        f_max=16000,
+        clip_val=1e-5,
+    ):
+        self.target_sr = sample_rate
+
+        self.n_mels = n_mels
+        self.n_fft = n_fft
+        self.win_size = win_length
+        self.hop_length = hop_length
+        self.fmin = f_min
+        self.fmax = f_max
+        self.clip_val = clip_val
+        self.mel_basis = {}
+        self.hann_window = torch.hann_window(win_length)
+
+    def get_mel(self, y, center=False):
+        sampling_rate = self.target_sr
+        n_mels = self.n_mels
+        n_fft = self.n_fft
+        win_size = self.win_size
+        hop_length = self.hop_length
+        fmin = self.fmin
+        fmax = self.fmax
+        clip_val = self.clip_val
+
+        mel_basis_key = str(fmax) + "_" + str(y.device)
+        if mel_basis_key not in self.mel_basis:
+            mel = librosa_mel_fn(
+                sr=sampling_rate, n_fft=n_fft, n_mels=n_mels, fmin=fmin, fmax=fmax
+            )
+            self.mel_basis[mel_basis_key] = torch.from_numpy(mel).float().to(y.device)
+
+        y = torch.nn.functional.pad(
+            y.unsqueeze(1),
+            (
+                (win_size - hop_length) // 2,
+                (win_size - hop_length + 1) // 2,
+            ),
+            mode="reflect",
+        )
+        y = y.squeeze(1)
+
+        spec = torch.stft(
+            y,
+            n_fft,
+            hop_length=hop_length,
+            win_length=win_size,
+            window=self.hann_window.to(y.device),
+            center=center,
+            pad_mode="reflect",
+            normalized=False,
+            onesided=True,
+            return_complex=True,
+        ).abs()
+
+        spec = torch.matmul(self.mel_basis[mel_basis_key], spec)
+        spec = dynamic_range_compression(spec, clip_val=clip_val)
+        spec *= 0.434294
+
+        return spec
+
+
+def dynamic_range_compression(x, C=1, clip_val=1e-5):
+    return torch.log(torch.clamp(x, min=clip_val) * C)
