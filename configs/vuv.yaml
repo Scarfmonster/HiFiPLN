@@ -18,7 +18,7 @@ dataset:
     path: "dataset/train"
     segment_length: 32768
     return_vuv: True
-    pitch_shift: Null
+    pitch_shift: [-12, 12]
     loudness_shift: [0.25, 1.0]
   valid:
     path: "dataset/valid"
@@ -35,7 +35,7 @@ dataloader:
     drop_last: True
     persistent_workers: True
   valid:
-    batch_size: 2
+    batch_size: 4
     shuffle: False
     num_workers: 4
     pin_memory: True
