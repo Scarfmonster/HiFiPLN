@@ -8,9 +8,7 @@ import torch.nn.functional as F
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from omegaconf import DictConfig
 
-from model.hifigan.hifigan import dynamic_range_compression
-
-from ..utils import get_mel_transform, plot_mel, plot_x_hat
+from ..utils import STFT, plot_x_hat, plot_mel_params
 from .model import VUVEstimator
 
 
@@ -21,7 +19,7 @@ class VUVTrainer(pl.LightningModule):
 
         self.estimator = VUVEstimator(config)
 
-        self.spectogram_extractor = get_mel_transform(
+        self.spectogram_extractor = STFT(
             sample_rate=config.sample_rate,
             n_fft=config.n_fft,
             win_length=config.win_length,
@@ -47,8 +45,7 @@ class VUVTrainer(pl.LightningModule):
         return [optim_e], [scheduler_e]
 
     def get_mels(self, x):
-        mels = self.spectogram_extractor.to(x.device, non_blocking=True)(x.squeeze(1))
-        mels = dynamic_range_compression(mels)
+        mels = self.spectogram_extractor.get_mel(x.squeeze(1))
         return mels
 
     def training_step(self, batch, batch_idx):
@@ -116,23 +113,36 @@ class VUVTrainer(pl.LightningModule):
             batch_size=pitches.shape[0],
         )
 
-        for idx, (
-            v,
-            gen_v,
-            mel_len,
-        ) in enumerate(
-            zip(
-                vuv.type(torch.float32).cpu().numpy(),
-                F.sigmoid(vuv_hat).type(torch.float32).cpu().numpy(),
-                mel_lens.cpu().numpy(),
-            )
-        ):
-            image_vuv = plot_x_hat(v[:mel_len], gen_v[:mel_len], "VUV", "VUV HAT")
+        if batch_idx == 0:
+            for idx, (
+                v,
+                gen_v,
+                mel,
+                mel_len,
+            ) in enumerate(
+                zip(
+                    vuv.type(torch.float32).cpu().numpy(),
+                    F.sigmoid(vuv_hat).type(torch.float32).cpu().numpy(),
+                    mels.cpu().numpy(),
+                    mel_lens.cpu().numpy(),
+                )
+            ):
+                image_vuv = plot_x_hat(v[:mel_len], gen_v[:mel_len], "VUV", "VUV HAT")
 
-            self.logger.experiment.add_figure(
-                f"sample-{idx}/vuv",
-                image_vuv,
-                global_step=self.global_step,
-            )
+                image_mel_vuv = plot_mel_params(
+                    mel[:, :mel_len], v[:mel_len], gen_v[:mel_len], "VUV", "VUV HAT"
+                )
 
-            plt.close(image_vuv)
+                self.logger.experiment.add_figure(
+                    f"sample-{idx}/vuv",
+                    image_vuv,
+                    global_step=self.global_step,
+                )
+                self.logger.experiment.add_figure(
+                    f"sample-{idx}/mel_vuv",
+                    image_mel_vuv,
+                    global_step=self.global_step,
+                )
+
+                plt.close(image_vuv)
+                plt.close(image_mel_vuv)

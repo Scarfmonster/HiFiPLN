@@ -38,12 +38,7 @@ class VocoderDataset(Dataset):
         return len(self.items)
 
     def __getitem__(self, idx):
-        try:
-            return self.get_item(idx)
-        except Exception as e:
-            print(e)
-            print(f"Error when loading {self.items[idx]}, skipping...")
-            return None
+        return self.get_item(idx)
 
     def get_item(self, idx):
         x = np.load(self.items[idx], allow_pickle=True).item()
@@ -79,19 +74,22 @@ class VocoderDataset(Dataset):
         )
 
         if self.segment_length and audio.shape[-1] > self.segment_length:
-            if self.return_vuv:
-                total_hops = (
-                    audio.shape[-1] - self.segment_length + 1
-                ) // self.hop_length
-                hop = np.random.randint(0, total_hops)
-                start = hop * self.hop_length
-            else:
-                start = np.random.randint(0, audio.shape[-1] - self.segment_length + 1)
+            audio_length = audio.shape[-1]
+            start = np.random.randint(0, audio.shape[-1] - self.segment_length + 1)
             audio = audio[start : start + self.segment_length]
             pitch = pitch[start : start + self.segment_length]
 
             if self.return_vuv and vuv is not None:
-                vuv = vuv[hop : hop + (self.segment_length // self.hop_length)]
+                vuv = np.interp(
+                    np.linspace(0, 1, audio_length), np.linspace(0, 1, len(vuv)), vuv
+                )
+                vuv = vuv[start : start + self.segment_length]
+                vuv = np.interp(
+                    np.linspace(0, 1, self.segment_length // self.hop_length),
+                    np.linspace(0, 1, len(vuv)),
+                    vuv,
+                )
+                vuv = np.where(vuv > 0.5, 1, 0)
 
         max_loudness = np.max(np.abs(audio))
         if max_loudness > 0:
