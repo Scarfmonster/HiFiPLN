@@ -76,7 +76,9 @@ def get_vuv(config: DictConfig, audio, f0):
     elif f0.shape[0] > wav_frames - 1:
         f0 = f0[:wav_frames]
 
-    ap = pyworld.d4c(audio, f0, t, config.sample_rate, fft_size=config.n_fft)
+    ap = pyworld.d4c(
+        audio, f0, t, config.sample_rate, fft_size=config.n_fft, threshold=0.8
+    )
 
     avg = np.mean(ap[:, : ap.shape[-1] // 3], axis=-1)
 
@@ -89,24 +91,9 @@ def chunks(lst, n):
         yield lst[i : i + n]
 
 
-def run(config, files, pitch_extractor, spectogram_extractor):
+def run(config, files):
     current = current_process()
     pos = current._identity[0] - 1
-    for af in tqdm(files, position=pos):
-        process(config, af, pitch_extractor, spectogram_extractor)
-
-
-if __name__ == "__main__":
-    freeze_support()
-
-    argparser = argparse.ArgumentParser()
-    argparser.add_argument("--config", type=str, required=True)
-    argparser.add_argument("--path", type=str, required=True)
-    argparser.add_argument("--clean", action="store_true")
-
-    args = argparser.parse_args()
-
-    config = OmegaConf.load(args.config)
 
     pitch_extractor_cls = getattr(
         __import__("pitch", fromlist=[config.preprocessing.pitch_extractor.name]),
@@ -130,6 +117,22 @@ if __name__ == "__main__":
     else:
         spectogram_extractor = None
 
+    for af in tqdm(files, position=pos):
+        process(config, af, pitch_extractor, spectogram_extractor)
+
+
+if __name__ == "__main__":
+    freeze_support()
+
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("--config", type=str, required=True)
+    argparser.add_argument("--path", type=str, required=True)
+    argparser.add_argument("--clean", action="store_true")
+
+    args = argparser.parse_args()
+
+    config = OmegaConf.load(args.config)
+
     if args.clean:
         print("Cleaning *.npy files...")
         for dirpath, _, dirnames in os.walk(args.path):
@@ -149,9 +152,7 @@ if __name__ == "__main__":
     shuffle(audio_files)
 
     splits = np.array_split(np.array(audio_files), 8)
-    splits = [
-        (config, files, pitch_extractor, spectogram_extractor) for files in splits
-    ]
+    splits = [(config, files) for files in splits]
 
     with Pool(8, initializer=tqdm.set_lock, initargs=(RLock(),)) as pool:
         pool.starmap(run, splits)

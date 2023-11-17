@@ -141,14 +141,26 @@ class HarvestPE(BasePE):
 
 class ParselmouthPE(BasePE):
     def __init__(
-        self, sample_rate=44100, hop_length=512, f0_min=40, f0_max=1100, keep_zeros=True
+        self,
+        sample_rate=44100,
+        hop_length=512,
+        f0_min=40,
+        f0_max=1100,
+        keep_zeros=True,
+        very_accurate=True,
     ) -> None:
         super().__init__(sample_rate, hop_length, f0_min, f0_max, keep_zeros=keep_zeros)
+        self.very_accurate = very_accurate
 
     def process(self, x: torch.Tensor):
         x2 = x.cpu().numpy()[0].astype(np.float64)
 
-        l_pad = int(np.ceil(1.5 / self.f0_min * self.sample_rate))
+        if self.very_accurate:
+            pad = 3.0
+        else:
+            pad = 1.5
+
+        l_pad = int(np.ceil(pad / self.f0_min * self.sample_rate))
         r_pad = (
             self.hop_length * ((len(x2) - 1) // self.hop_length + 1)
             - len(x2)
@@ -160,12 +172,13 @@ class ParselmouthPE(BasePE):
         # noinspection PyArgumentList
         s = parselmouth.Sound(x2, sampling_frequency=self.sample_rate).to_pitch_ac(
             time_step=self.hop_length / self.sample_rate,
-            voicing_threshold=0.6,
+            voicing_threshold=0.35,
             pitch_floor=self.f0_min,
             pitch_ceiling=self.f0_max,
-            # very_accurate=True,
+            very_accurate=self.very_accurate,
+            voiced_unvoiced_cost=0.14,
         )
-        assert np.abs(s.t1 - 1.5 / self.f0_min) < 0.001
+        assert np.abs(s.t1 - pad / self.f0_min) < 0.001
         f0 = s.selected_array["frequency"].astype(np.float32)
         return f0
 
@@ -186,6 +199,8 @@ class PyinPE(BasePE):
             sr=self.sample_rate,
             frame_length=self.hop_length * 4,
             fill_na=0.0,
+            center=True,
+            pad_mode="reflect",
         )
 
         return f0
