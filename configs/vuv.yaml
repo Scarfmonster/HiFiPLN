@@ -42,8 +42,10 @@ dataloader:
     drop_last: True
     persistent_workers: True
 model:
-  lrelu_slope: 0.2
+  lrelu_slope: 0.02
   input_noise: 0.01
+  channels: 512
+  layers: 4
 preprocessing:
   f0_min: 40
   f0_max: 1400

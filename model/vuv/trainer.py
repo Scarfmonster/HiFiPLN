@@ -77,7 +77,7 @@ class VUVTrainer(pl.LightningModule):
             f"train_loss",
             loss_vuv,
             on_step=True,
-            on_epoch=True,
+            on_epoch=False,
             prog_bar=True,
             logger=True,
             sync_dist=True,
@@ -105,7 +105,7 @@ class VUVTrainer(pl.LightningModule):
         self.log(
             "valid_loss",
             loss_vuv,
-            on_step=True,
+            on_step=False,
             on_epoch=True,
             prog_bar=False,
             logger=True,
