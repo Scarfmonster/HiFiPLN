@@ -38,6 +38,7 @@ class BasePE(abc.ABC):
                 f0 = np.pad(
                     f0, (total_pad // 2, total_pad - total_pad // 2), "constant"
                 )
+                f0 = torch.from_numpy(f0).float()
             elif total_pad < 0:
                 f0 = f0[:total_pad]
 
@@ -195,7 +196,7 @@ class ParselmouthPE(BasePE):
         # noinspection PyArgumentList
         s = parselmouth.Sound(x2, sampling_frequency=self.sample_rate).to_pitch_ac(
             time_step=self.hop_length / self.sample_rate,
-            voicing_threshold=0.5,
+            voicing_threshold=0.48,
             pitch_floor=self.f0_min,
             pitch_ceiling=self.f0_max,
             very_accurate=self.very_accurate,
@@ -239,9 +240,9 @@ class MixedPE(BasePE):
         self.dio = DioPE(sample_rate, hop_length, f0_min, f0_max, keep_zeros)
 
     def process(self, x: torch.Tensor):
-        f0h = self.harvest(x)
-        f0p = self.parsel(x)
-        f0y = self.dio(x)
+        f0p, _, _ = self.parsel(x)
+        f0h, _, _ = self.harvest(x, pad_to=f0p.shape[-1])
+        f0y, _, _ = self.dio(x, pad_to=f0p.shape[-1])
 
         f0 = []
 
