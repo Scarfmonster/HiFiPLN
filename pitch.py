@@ -139,6 +139,29 @@ class HarvestPE(BasePE):
         return f0
 
 
+class DioPE(BasePE):
+    def __init__(
+        self, sample_rate=44100, hop_length=512, f0_min=40, f0_max=1100, keep_zeros=True
+    ) -> None:
+        super().__init__(sample_rate, hop_length, f0_min, f0_max, keep_zeros=keep_zeros)
+
+    def process(self, x: torch.Tensor):
+        x2 = x.cpu().numpy()[0].astype(np.float64)
+
+        _f0, t = pyworld.dio(
+            x2,
+            self.sample_rate,
+            f0_floor=self.f0_min,
+            f0_ceil=self.f0_max,
+            frame_period=self.hop_length / self.sample_rate * 1000,
+            allowed_range=0.11,
+        )
+
+        f0 = pyworld.stonemask(x2, _f0, t, self.sample_rate)
+
+        return f0
+
+
 class ParselmouthPE(BasePE):
     def __init__(
         self,
@@ -172,11 +195,11 @@ class ParselmouthPE(BasePE):
         # noinspection PyArgumentList
         s = parselmouth.Sound(x2, sampling_frequency=self.sample_rate).to_pitch_ac(
             time_step=self.hop_length / self.sample_rate,
-            voicing_threshold=0.35,
+            voicing_threshold=0.5,
             pitch_floor=self.f0_min,
             pitch_ceiling=self.f0_max,
             very_accurate=self.very_accurate,
-            voiced_unvoiced_cost=0.14,
+            voiced_unvoiced_cost=0.1554,
         )
         assert np.abs(s.t1 - pad / self.f0_min) < 0.001
         f0 = s.selected_array["frequency"].astype(np.float32)
@@ -213,12 +236,12 @@ class MixedPE(BasePE):
         super().__init__(sample_rate, hop_length, f0_min, f0_max, keep_zeros)
         self.harvest = HarvestPE(sample_rate, hop_length, f0_min, f0_max, keep_zeros)
         self.parsel = ParselmouthPE(sample_rate, hop_length, f0_min, f0_max, keep_zeros)
-        self.pyin = PyinPE(sample_rate, hop_length, f0_min, f0_max, keep_zeros)
+        self.dio = DioPE(sample_rate, hop_length, f0_min, f0_max, keep_zeros)
 
     def process(self, x: torch.Tensor):
         f0h = self.harvest(x)
         f0p = self.parsel(x)
-        f0y = self.pyin(x)
+        f0y = self.dio(x)
 
         f0 = []
 
