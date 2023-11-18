@@ -47,10 +47,6 @@ def process(
 
     vuv = get_vuv(config, audio, f0_0)
 
-    vuv = 1 - vuv
-
-    vuv = np.ones_like(vuv) * (vuv > 0.01)
-
     if config.preprocessing.vuv:
         data["vuv"] = vuv
 
@@ -76,13 +72,27 @@ def get_vuv(config: DictConfig, audio, f0):
     elif f0.shape[0] > wav_frames - 1:
         f0 = f0[:wav_frames]
 
-    ap = pyworld.d4c(
-        audio, f0, t, config.sample_rate, fft_size=config.n_fft, threshold=0.8
-    )
+    ap = pyworld.d4c(audio, f0, t, config.sample_rate, fft_size=config.n_fft)
 
-    avg = np.mean(ap[:, : ap.shape[-1] // 3], axis=-1)
+    avg = 1 - ap[:, 0]
+
+    avg = np.ones_like(avg) * (avg > 0.01)
+
+    for s in range(1, config.preprocessing.vuv_smoothing + 1):
+        smooth(avg, s)
+
+    # avg = np.mean(ap[:, 0 : ap.shape[-1] // 2], axis=-1)
 
     return avg.astype(np.float32)[:f0_len]
+
+
+def smooth(arr, s):
+    for i in range(s - 1, len(arr) - s):
+        m = np.mean(np.concatenate((arr[i - s : i], arr[i + 1 : i + s + 1])))
+        if m < 0.5:
+            arr[i] = 0
+        elif m > 0.5:
+            arr[i] = 1
 
 
 def chunks(lst, n):
@@ -102,6 +112,8 @@ def run(config, files):
     pitch_extractor = pitch_extractor_cls(
         sample_rate=config.sample_rate,
         keep_zeros=config.preprocessing.pitch_extractor.keep_zeros,
+        f0_min=config.preprocessing.f0_min,
+        f0_max=config.preprocessing.f0_max,
     )
 
     if config.preprocessing.spectogram:

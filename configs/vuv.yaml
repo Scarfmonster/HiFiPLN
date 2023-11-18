@@ -18,7 +18,7 @@ dataset:
     path: "dataset/train"
     segment_length: 32768
     return_vuv: True
-    pitch_shift: [-12, 12]
+    pitch_shift: [-6, 6]
     loudness_shift: [0.25, 1.0]
   valid:
     path: "dataset/valid"
@@ -54,3 +54,4 @@ preprocessing:
     keep_zeros: False
   spectogram: False
   vuv: True
+  vuv_smoothing: 5
