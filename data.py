@@ -46,7 +46,9 @@ class VocoderDataset(Dataset):
         pitch = x["pitch"]
         vuv = x["vuv"] if "vuv" in x else None
 
-        audio = highpass_biquad(audio, self.f_min).numpy()
+        audio = highpass_biquad(
+            torch.from_numpy(audio), self.sample_rate, self.f_min
+        ).numpy()
 
         # Change loudness
         max_loudness = np.max(np.abs(audio))
