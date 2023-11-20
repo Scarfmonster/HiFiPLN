@@ -4,25 +4,25 @@ from torch.utils.data import Dataset
 import os
 import numpy as np
 from torchaudio.transforms import MelSpectrogram
-from torchaudio.functional import resample
+from torchaudio.functional import resample, highpass_biquad
 import torch
 
 
 class VocoderDataset(Dataset):
     def __init__(self, config: DictConfig, split: str) -> None:
         super().__init__()
-        self.config = config
         self.split = split
-        self.path = self.config.dataset[split].path
+        self.path = config.dataset[split].path
         self.items = self.get_items()
 
-        self.segment_length = self.config.dataset[split].segment_length
-        self.sample_rate = self.config.sample_rate
-        self.hop_length = self.config.hop_length
-        self.window_length = self.config.win_length
-        self.pitch_shift = self.config.dataset[split].pitch_shift
-        self.loudness_shift = self.config.dataset[split].loudness_shift
-        self.return_vuv = self.config.dataset[split].get("return_vuv", False)
+        self.segment_length = config.dataset[split].segment_length
+        self.sample_rate = config.sample_rate
+        self.hop_length = config.hop_length
+        self.window_length = config.win_length
+        self.pitch_shift = config.dataset[split].pitch_shift
+        self.loudness_shift = config.dataset[split].loudness_shift
+        self.return_vuv = config.dataset[split].get("return_vuv", False)
+        self.f_min = config.f_min
 
         self.spectogram_extractor = MelSpectrogram(
             sample_rate=config.sample_rate,
@@ -45,6 +45,8 @@ class VocoderDataset(Dataset):
         audio = x["audio"]
         pitch = x["pitch"]
         vuv = x["vuv"] if "vuv" in x else None
+
+        audio = highpass_biquad(audio, self.f_min).numpy()
 
         # Change loudness
         max_loudness = np.max(np.abs(audio))
