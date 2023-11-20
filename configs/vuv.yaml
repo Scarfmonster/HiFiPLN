@@ -18,7 +18,7 @@ dataset:
     path: "dataset/train"
     segment_length: 32768
     return_vuv: True
-    pitch_shift: [-6, 6]
+    pitch_shift: [-12, 12]
     loudness_shift: [0.25, 1.0]
   valid:
     path: "dataset/valid"
@@ -47,6 +47,7 @@ model:
   channels: 512
   layers: 4
 preprocessing:
+  threads: 8
   f0_min: 40
   f0_max: 1400
   pitch_extractor:

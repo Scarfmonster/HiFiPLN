@@ -1,11 +1,11 @@
 import abc
 from typing import Optional
 
+import librosa
 import numpy as np
 import parselmouth
 import pyworld
 import torch
-import librosa
 
 
 class BasePE(abc.ABC):
@@ -48,7 +48,7 @@ class BasePE(abc.ABC):
         if self.keep_zeros:
             return f0, vuv, f0
 
-        org_f0 = f0
+        org_f0 = torch.clone(f0)
 
         # Remove zero frequencies and linearly interpolate
         nzindex = torch.nonzero(f0).squeeze()
@@ -193,10 +193,9 @@ class ParselmouthPE(BasePE):
         )
         x2 = np.pad(x2, (l_pad, r_pad))
 
-        # noinspection PyArgumentList
         s = parselmouth.Sound(x2, sampling_frequency=self.sample_rate).to_pitch_ac(
             time_step=self.hop_length / self.sample_rate,
-            voicing_threshold=0.48,
+            voicing_threshold=0.45,
             pitch_floor=self.f0_min,
             pitch_ceiling=self.f0_max,
             very_accurate=self.very_accurate,

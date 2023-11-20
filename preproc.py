@@ -1,20 +1,18 @@
 import argparse
 import os
+from multiprocessing import Pool, RLock, current_process, freeze_support
 from pathlib import Path
+from random import shuffle
 
 import librosa
 import numpy as np
 import torch
-from omegaconf import OmegaConf, DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torchaudio.transforms import MelSpectrogram
-
 from tqdm import tqdm
 
 from pitch import BasePE
-import pyworld
-from multiprocessing import Pool, freeze_support, RLock
-from multiprocessing import current_process
-from random import shuffle
+from vuv import VUVEstimator
 
 
 def process(
@@ -22,6 +20,7 @@ def process(
     audio_path: Path,
     pitch_extractor: BasePE,
     spectogram_extractor: MelSpectrogram,
+    vuv_extractor: VUVEstimator,
 ):
     save_path = audio_path.with_suffix(".npy")
     if save_path.exists():
@@ -41,58 +40,24 @@ def process(
     else:
         pad_to = None
 
+    if config.preprocessing.vuv:
+        pad_to = None
+
     f0, _, f0_0 = pitch_extractor(audio, pad_to)
-
-    data["pitch"] = f0.cpu().numpy()
-
-    vuv = get_vuv(config, audio, f0_0)
+    f0 = f0.cpu().numpy()
 
     if config.preprocessing.vuv:
+        vuv = vuv_extractor.get_vuv(audio, f0_0)
         data["vuv"] = vuv
+        f0 = np.interp(
+            np.linspace(np.min(f0), np.max(f0), pad_to if pad_to else len(f0) // 4),
+            np.linspace(np.min(f0), np.max(f0), len(f0)),
+            f0,
+        )
+
+    data["pitch"] = f0
 
     np.save(save_path, data)
-
-
-def get_vuv(config: DictConfig, audio, f0):
-    audio = audio.cpu().numpy().astype(np.float64)[0]
-    f0 = f0.cpu().numpy().astype(np.float64)
-    f0_len = f0.shape[0]
-
-    time_step = config.hop_length / config.sample_rate
-    wav_frames = (audio.shape[-1] + config.hop_length - 1) // config.hop_length
-    t = np.arange(0, wav_frames) * time_step
-
-    if f0.shape[0] < wav_frames - 1:
-        f0 = np.pad(
-            f0,
-            (0, wav_frames - f0.shape[0]),
-            mode="constant",
-            constant_values=(f0[0], f0[-1]),
-        )
-    elif f0.shape[0] > wav_frames - 1:
-        f0 = f0[:wav_frames]
-
-    ap = pyworld.d4c(audio, f0, t, config.sample_rate, fft_size=config.n_fft)
-
-    avg = 1 - ap[:, 0]
-
-    avg = np.ones_like(avg) * (avg > 0.01)
-
-    for s in range(1, config.preprocessing.vuv_smoothing + 1):
-        smooth(avg, s)
-
-    # avg = np.mean(ap[:, 0 : ap.shape[-1] // 2], axis=-1)
-
-    return avg.astype(np.float32)[:f0_len]
-
-
-def smooth(arr, s):
-    for i in range(s - 1, len(arr) - s):
-        m = np.mean(np.concatenate((arr[i - s : i], arr[i + 1 : i + s + 1])))
-        if m < 0.5:
-            arr[i] = 0
-        elif m > 0.5:
-            arr[i] = 1
 
 
 def chunks(lst, n):
@@ -104,17 +69,6 @@ def chunks(lst, n):
 def run(config, files):
     current = current_process()
     pos = current._identity[0] - 1
-
-    pitch_extractor_cls = getattr(
-        __import__("pitch", fromlist=[config.preprocessing.pitch_extractor.name]),
-        config.preprocessing.pitch_extractor.name,
-    )
-    pitch_extractor = pitch_extractor_cls(
-        sample_rate=config.sample_rate,
-        keep_zeros=config.preprocessing.pitch_extractor.keep_zeros,
-        f0_min=config.preprocessing.f0_min,
-        f0_max=config.preprocessing.f0_max,
-    )
 
     if config.preprocessing.spectogram:
         spectogram_extractor = MelSpectrogram(
@@ -129,8 +83,28 @@ def run(config, files):
     else:
         spectogram_extractor = None
 
+    hop_length = config.hop_length
+
+    if config.preprocessing.vuv:
+        vuv_extractor = VUVEstimator(config)
+        hop_length = hop_length // 4
+    else:
+        vuv_extractor = None
+
+    pitch_extractor_cls = getattr(
+        __import__("pitch", fromlist=[config.preprocessing.pitch_extractor.name]),
+        config.preprocessing.pitch_extractor.name,
+    )
+    pitch_extractor = pitch_extractor_cls(
+        sample_rate=config.sample_rate,
+        hop_length=hop_length,
+        keep_zeros=config.preprocessing.pitch_extractor.keep_zeros,
+        f0_min=config.preprocessing.f0_min,
+        f0_max=config.preprocessing.f0_max,
+    )
+
     for af in tqdm(files, position=pos):
-        process(config, af, pitch_extractor, spectogram_extractor)
+        process(config, af, pitch_extractor, spectogram_extractor, vuv_extractor)
 
 
 if __name__ == "__main__":
@@ -163,7 +137,7 @@ if __name__ == "__main__":
 
     shuffle(audio_files)
 
-    splits = np.array_split(np.array(audio_files), 8)
+    splits = np.array_split(np.array(audio_files), config.preprocessing.threads)
     splits = [(config, files) for files in splits]
 
     with Pool(8, initializer=tqdm.set_lock, initargs=(RLock(),)) as pool:
