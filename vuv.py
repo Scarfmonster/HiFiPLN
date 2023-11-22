@@ -9,70 +9,35 @@ from torchaudio.functional import highpass_biquad, lowpass_biquad
 class VUVEstimator:
     def __init__(self, config: DictConfig) -> None:
         self.sample_rate = config.sample_rate
-        self.win_length = config.win_length // 4
-        self.hop_length = config.hop_length // 4
+        self.oversampling = config.preprocessing.oversampling
+        self.win_length = config.win_length
+        self.hop_length = config.hop_length // self.oversampling
         self.f0_min = config.preprocessing.f0_min
         self.f0_max = config.preprocessing.f0_max
         self.f_max = config.f_max
         self.vuv_smoothing = config.preprocessing.vuv_smoothing
-        self.zcr_uv = 0.25
-        self.zcr_v = 0.03
-        self.rms_uv = 0.01
 
     def get_vuv(self, audio, f0):
         audio = highpass_biquad(audio, self.sample_rate, self.f0_min)
-        audio = lowpass_biquad(audio, self.sample_rate, self.f_max)
-
-        max_loudness = torch.max(torch.abs(audio))
-        if max_loudness > 0:
-            audio /= max_loudness
+        # audio = lowpass_biquad(audio, self.sample_rate, self.f_max)
 
         ap = self.get_world(audio, f0)
         ap = ap[:, 0]
 
-        audio = audio.cpu().numpy()[0].astype(np.float64)
+        vuv = 1 - (np.ones_like(ap) * (ap > 0.5))
 
-        zcr = librosa.feature.zero_crossing_rate(
-            audio,
-            frame_length=self.win_length,
-            hop_length=self.hop_length,
-            threshold=0.001,
-        )
-        zcr = zcr[0]
-        zcr = np.convolve(zcr, np.hanning(7) / 3, "same")
-
-        rms = self.get_rms(
-            audio, win_length=self.win_length, hop_length=self.hop_length
-        )
-        rms = rms[0]
-
-        vuv = 1 - (np.ones_like(ap) * (ap > 0.01))
-
-        for i in range(len(vuv)):
-            if zcr[i] > self.zcr_uv:
-                vuv[i] = 0
-            elif zcr[i] < self.zcr_v and rms[i] > self.rms_uv:
-                vuv[i] = 1
-            elif rms[i] <= self.rms_uv:
-                vuv[i] = 0
-
-        vuv = np.convolve(
-            vuv,
-            np.hanning(self.vuv_smoothing) / (self.vuv_smoothing / 2),
-            "same",
-        )
-        vuv = np.interp(
-            np.linspace(0, np.max(vuv), len(vuv) // 4),
-            np.linspace(0, np.max(vuv), len(vuv)),
-            vuv,
-        )
-
-        vuv = np.ones_like(vuv) * (vuv >= 0.5)
+        if self.oversampling > 1:
+            vuv = np.interp(
+                np.linspace(0, np.max(vuv), len(vuv) // self.oversampling),
+                np.linspace(0, np.max(vuv), len(vuv)),
+                vuv,
+            )
+            vuv = np.ones_like(vuv) * (vuv >= 0.5)
 
         for s in range(1, self.vuv_smoothing + 1):
             self.smooth(vuv, s)
 
-        return vuv.astype(np.float32)
+        return vuv
 
     def get_world(self, audio, f0):
         time_step = self.hop_length / self.sample_rate
