@@ -19,7 +19,6 @@ class VUVEstimator(nn.Module):
         self.hop_length = config.hop_length
         self.channels = config.model_vuv.channels
 
-        self.pre = weight_norm(nn.Conv1d(self.n_mels, self.n_mels, 7, padding=3))
         self.res = nn.ModuleList()
         self.skip = nn.ModuleList()
         self.conv = nn.ModuleList()
@@ -27,11 +26,8 @@ class VUVEstimator(nn.Module):
         for x in range(config.model_vuv.layers + 1):
             new_ch = self.channels // 2**x
 
-            filter = 7 if x == 0 else 3
-            padding = get_padding(filter)
-
-            self.conv.append(nn.Conv1d(old_ch, new_ch, filter, padding=padding))
-            self.res.append(ResBlock(new_ch, 3, lrelu_slope=self.lrelu_slope))
+            self.conv.append(nn.Conv1d(old_ch, new_ch, 7, padding=3))
+            self.res.append(ResBlock(new_ch, 7, lrelu_slope=self.lrelu_slope))
             self.skip.append(nn.Conv1d(self.n_mels, new_ch, 7, padding=3))
 
             old_ch = new_ch
@@ -40,9 +36,9 @@ class VUVEstimator(nn.Module):
 
         self.conv.apply(init_weights)
         self.skip.apply(init_weights)
+        self.post.apply(init_weights)
 
     def forward(self, x):
-        x = self.pre(x)
         org_x = x
         for c, r, s in zip(self.conv, self.res, self.skip):
             x = c(x)

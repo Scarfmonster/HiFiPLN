@@ -74,7 +74,7 @@ class VUVTrainer(pl.LightningModule):
         optim.step()
 
         self.log(
-            f"train_loss",
+            f"train/loss",
             loss_vuv,
             on_step=True,
             on_epoch=False,
@@ -103,7 +103,7 @@ class VUVTrainer(pl.LightningModule):
         loss_vuv = F.binary_cross_entropy_with_logits(vuv_hat, vuv)
 
         self.log(
-            "valid_loss",
+            "valid/loss",
             loss_vuv,
             on_step=False,
             on_epoch=True,
