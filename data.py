@@ -5,6 +5,7 @@ import os
 import numpy as np
 from torchaudio.transforms import MelSpectrogram
 from torchaudio.functional import resample, highpass_biquad
+from torch.nn.functional import interpolate
 import torch
 
 
@@ -42,19 +43,17 @@ class VocoderDataset(Dataset):
 
     def get_item(self, idx):
         x = np.load(self.items[idx], allow_pickle=True).item()
-        audio = x["audio"]
-        pitch = x["pitch"]
-        vuv = x["vuv"] if "vuv" in x else None
+        audio = torch.from_numpy(x["audio"]).float()
+        pitch = torch.from_numpy(x["pitch"]).float()
+        vuv = torch.from_numpy(x["vuv"]).float() if "vuv" in x else None
 
-        audio = highpass_biquad(
-            torch.from_numpy(audio), self.sample_rate, self.f_min
-        ).numpy()
+        audio = highpass_biquad(audio, self.sample_rate, self.f_min)
 
         # Change loudness
-        max_loudness = np.max(np.abs(audio))
+        max_loudness = torch.max(torch.abs(audio))
 
         if max_loudness > 1.0:
-            audio = audio / (max_loudness + 1e-5)
+            audio = audio / max_loudness
 
         if self.pitch_shift is not None:
             pitch_steps = np.random.randint(
@@ -66,16 +65,16 @@ class VocoderDataset(Dataset):
                 orig_sr = orig_sr - (orig_sr % 100)
 
                 audio = resample(
-                    torch.from_numpy(audio).float(),
+                    audio,
                     orig_freq=orig_sr,
                     new_freq=self.sample_rate,
-                ).numpy()
+                )
 
                 pitch *= 2 ** (pitch_steps / 12)
 
-        pitch = np.interp(
-            np.linspace(0, 1, audio.shape[-1]), np.linspace(0, 1, len(pitch)), pitch
-        )
+        pitch = interpolate(
+            pitch[None, None, :], audio.shape[-1], mode="linear", align_corners=True
+        )[0, 0, :]
 
         if self.segment_length and audio.shape[-1] > self.segment_length:
             audio_length = audio.shape[-1]
@@ -84,18 +83,19 @@ class VocoderDataset(Dataset):
             pitch = pitch[start : start + self.segment_length]
 
             if self.return_vuv and vuv is not None:
-                vuv = np.interp(
-                    np.linspace(0, 1, audio_length), np.linspace(0, 1, len(vuv)), vuv
+                vuv = interpolate(
+                    vuv[None, None, :], audio_length, mode="linear", align_corners=True
                 )
-                vuv = vuv[start : start + self.segment_length]
-                vuv = np.interp(
-                    np.linspace(0, 1, self.segment_length // self.hop_length),
-                    np.linspace(0, 1, len(vuv)),
+                vuv = vuv[:, :, start : start + self.segment_length]
+                vuv = interpolate(
                     vuv,
-                )
-                vuv = np.where(vuv > 0.5, 1, 0)
+                    self.segment_length // self.hop_length,
+                    mode="linear",
+                    align_corners=True,
+                )[0, 0, :]
+                vuv = torch.where(vuv > 0.5, 1, 0)
 
-        max_loudness = np.max(np.abs(audio))
+        max_loudness = torch.max(torch.abs(audio))
         if max_loudness > 0:
             audio /= max_loudness
 
@@ -107,11 +107,8 @@ class VocoderDataset(Dataset):
             )
             audio *= factor
 
-        # audio = torch.from_numpy(audio[None])
-        # pitch = torch.from_numpy(pitch[None])
         audio = audio[None]
         pitch = pitch[None]
-        # mel = self.spectogram_extractor(audio.unsqueeze(0)).squeeze()
         data = {"audio": audio, "pitch": pitch}
 
         if self.return_vuv and vuv is not None:
