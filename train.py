@@ -72,7 +72,7 @@ if __name__ == "__main__":
         # num_sanity_val_steps=10,
         callbacks=[
             ModelCheckpoint(
-                filename="{epoch}-{step}",
+                filename="{epoch}-{step}-{valid_loss:.4}",
                 save_on_train_epoch_end=False,
                 save_top_k=-1,
             ),
