@@ -59,7 +59,7 @@ class VUVTrainer(pl.LightningModule):
 
         mel_lens = batch["audio_lens"] // self.config["hop_length"]
         mels = self.get_mels(y)[:, :, : mel_lens.max()]
-        gen_mels = mels + torch.rand_like(mels) * self.config.model.input_noise
+        gen_mels = mels + torch.rand_like(mels) * self.config.model_vuv.input_noise
         vuv_hat = self.estimator(gen_mels)
 
         vuv = vuv[:, :, : mel_lens.max()]

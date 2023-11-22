@@ -72,9 +72,10 @@ if __name__ == "__main__":
         # num_sanity_val_steps=10,
         callbacks=[
             ModelCheckpoint(
-                filename="{epoch}-{step}-{valid_loss:.4}",
+                filename="epoch={epoch}-step={step}-loss={valid/loss:.4}",
                 save_on_train_epoch_end=False,
                 save_top_k=-1,
+                auto_insert_metric_name=False,
             ),
             LearningRateMonitor(logging_interval="step"),
         ],

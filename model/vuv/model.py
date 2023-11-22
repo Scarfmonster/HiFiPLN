@@ -15,16 +15,16 @@ class VUVEstimator(nn.Module):
         super().__init__()
 
         self.n_mels = config.n_mels
-        self.lrelu_slope = config.model.lrelu_slope
+        self.lrelu_slope = config.model_vuv.lrelu_slope
         self.hop_length = config.hop_length
-        self.channels = config.model.channels
+        self.channels = config.model_vuv.channels
 
         self.pre = weight_norm(nn.Conv1d(self.n_mels, self.n_mels, 7, padding=3))
         self.res = nn.ModuleList()
         self.skip = nn.ModuleList()
         self.conv = nn.ModuleList()
         old_ch = self.n_mels
-        for x in range(config.model.layers + 1):
+        for x in range(config.model_vuv.layers + 1):
             new_ch = self.channels // 2**x
 
             filter = 7 if x == 0 else 3

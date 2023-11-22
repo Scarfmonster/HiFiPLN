@@ -18,7 +18,7 @@ dataset:
     path: "dataset/train"
     segment_length: 32768
     return_vuv: True
-    pitch_shift: [-12, 12]
+    pitch_shift: [-3, 3]
     loudness_shift: [0.25, 1.0]
   valid:
     path: "dataset/valid"
@@ -41,8 +41,8 @@ dataloader:
     pin_memory: True
     drop_last: True
     persistent_workers: True
-model:
-  lrelu_slope: 0.02
+model_vuv:
+  lrelu_slope: 0.1
   input_noise: 0.01
   channels: 512
   layers: 4
@@ -56,3 +56,4 @@ preprocessing:
   spectogram: False
   vuv: True
   vuv_smoothing: 5
+  oversampling: 2
