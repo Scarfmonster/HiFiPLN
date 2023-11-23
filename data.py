@@ -95,11 +95,11 @@ class VocoderDataset(Dataset):
                 )[0, 0, :]
                 vuv = torch.where(vuv > 0.5, 1, 0)
 
-        max_loudness = torch.max(torch.abs(audio))
-        if max_loudness > 0:
-            audio /= max_loudness
-
         if self.loudness_shift is not None:
+            max_loudness = torch.max(torch.abs(audio))
+            if max_loudness > 0:
+                audio /= max_loudness
+
             factor = (
                 np.random.random_sample()
                 * (self.loudness_shift[1] - self.loudness_shift[0])
