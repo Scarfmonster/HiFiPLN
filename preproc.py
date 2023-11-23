@@ -8,6 +8,7 @@ import librosa
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
+from torchaudio.functional import highpass_biquad
 from torchaudio.transforms import MelSpectrogram
 from tqdm import tqdm
 
@@ -42,6 +43,8 @@ def process(
 
     if config.preprocessing.vuv:
         pad_to = None
+
+    audio = highpass_biquad(audio, config.sample_rate, config.f_min)
 
     f0, _, f0_0 = pitch_extractor(audio, pad_to)
     f0 = f0.cpu().numpy()
