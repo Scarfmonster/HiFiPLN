@@ -7,13 +7,12 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 
-from model.hifigan.hifigan import dynamic_range_compression
 from model.hifipln.discriminator import (
     MultiPeriodDiscriminator,
     MultiResolutionDiscriminator,
 )
 
-from ..utils import get_mel_transform, plot_mel
+from ..utils import STFT, plot_mel
 from .generator import HiFiPLN
 
 
@@ -22,15 +21,13 @@ class HiFiPlnTrainer(pl.LightningModule):
         super().__init__()
         self.config = config
 
-        # self.save_hyperparameters(logger=False)
-
         self.generator = HiFiPLN(config)
         self.mpd = MultiPeriodDiscriminator(config)
         self.mrd = MultiResolutionDiscriminator(config)
 
         self.stft_config = config.mrd.resolutions
 
-        self.spectogram_extractor = get_mel_transform(
+        self.spectogram_extractor = STFT(
             sample_rate=config.sample_rate,
             n_fft=config.n_fft,
             win_length=config.win_length,
@@ -112,11 +109,10 @@ class HiFiPlnTrainer(pl.LightningModule):
 
             loss_stft += F.l1_loss(audio_stft, gen_audio_stft)
 
-        return loss_stft
+        return loss_stft / len(self.stft_config)
 
     def get_mels(self, x):
-        mels = self.spectogram_extractor.to(x.device, non_blocking=True)(x.squeeze(1))
-        mels = dynamic_range_compression(mels)
+        mels = self.spectogram_extractor.get_mel(x.squeeze(1))
         return mels
 
     def training_step(self, batch, batch_idx):
@@ -130,7 +126,7 @@ class HiFiPlnTrainer(pl.LightningModule):
         mel_lens = batch["audio_lens"] // self.config["hop_length"]
         mels = self.get_mels(audio)[:, :, : mel_lens.max()]
         gen_mels = mels + torch.rand_like(mels) * self.config.model.input_noise
-        gen_audio, _, _ = self.generator(gen_mels, pitches)
+        gen_audio = self.generator(gen_mels, pitches)
         gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
 
         # Generator
@@ -163,8 +159,9 @@ class HiFiPlnTrainer(pl.LightningModule):
         stft_loss = self.stft_loss(audio, gen_audio)
         mel_loss = F.l1_loss(gen_audio_mel, mels)
 
-        feat_loss *= 2.0
-        mel_loss *= 45.0
+        feat_loss *= 3.0
+        stft_loss *= 7.5
+        mel_loss *= 40.0
 
         loss_gen_all = gen_loss + feat_loss + envelope_loss + stft_loss + mel_loss
 
@@ -282,11 +279,8 @@ class HiFiPlnTrainer(pl.LightningModule):
         mel_lens = batch["audio_lens"] // self.config.hop_length
 
         mels = self.get_mels(audios)[:, :, : mel_lens.max()]
-        gen_audio, vuv, power = self.generator(mels, pitches)
+        gen_audio = self.generator(mels, pitches)
         gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
-
-        vuv = vuv[:, 0, : mel_lens.max()]
-        power = power[:, 0, : mel_lens.max()]
 
         loss_stft = self.stft_loss(audios, gen_audio, mel_lens)
         loss_mel = F.l1_loss(mels, gen_audio_mel)
@@ -371,10 +365,3 @@ class HiFiPlnTrainer(pl.LightningModule):
                 )
 
                 plt.close(image_mels)
-
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        pitches, audios = (batch["pitch"].float(), batch["audio"].float())
-        mel_lens = batch["audio_lens"] // self.config.hop_length
-        mels = self.get_mels(audios)[:, :, : mel_lens.max()]
-
-        return self.generator(mels, pitches)

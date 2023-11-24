@@ -163,6 +163,8 @@ class DiscriminatorR(nn.Module):
             win_length=win_length,
             center=False,
             return_complex=True,
+            window=torch.hann_window(win_length).to(x.device),
+            normalized=False,
         )  # [B, F, TT, 2]
         x = torch.view_as_real(x)
         mag = torch.norm(x, p=2, dim=-1)  # [B, F, TT]

@@ -32,8 +32,8 @@ class ExportableHiFiPLN(torch.nn.Module):
         self.model.remove_parametrizations()
 
     def forward(self, mel: torch.Tensor, f0: torch.Tensor):
-        mel = mel.transpose(-1, -2) * 2.30259
-        wav, _, _ = self.model(mel, f0)
+        mel = mel.transpose(-1, -2)
+        wav = self.model(mel, f0)
 
         return wav
 

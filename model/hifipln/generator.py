@@ -18,6 +18,7 @@ class HiFiPLN(nn.Module):
         super().__init__()
 
         self.hop_length = config.hop_length
+        self.win_length = config.win_length
         self.lrelu_slope = config.model.lrelu_slope
         self.upsample_rates = config.model.upsample_rates
         self.upsample_kernel_sizes = config.model.upsample_kernel_sizes
@@ -81,20 +82,21 @@ class HiFiPLN(nn.Module):
                 self.resblocks.append(ResBlock(ch, k, d, self.lrelu_slope))
 
         self.conv_post = weight_norm(nn.Conv1d(ch, 1, 7, 1, padding=3))
+        self.pre_conv.apply(init_weights)
+        self.noise_convs.apply(init_weights)
         self.ups.apply(init_weights)
+        self.resblocks.apply(init_weights)
         self.conv_post.apply(init_weights)
 
         self.vuv = VUVEstimator(config)
         self.load_vuv(config.model.vuv_ckpt)
-        self.power = PowerEstimator(config)
-        self.load_power(config.model.power_ckpt)
 
     def forward(self, x, f0):
         if f0.ndim == 2:
             f0 = f0[:, None]
 
         f0 = F.interpolate(
-            f0, size=x.shape[-1] * self.hop_length, mode="linear"
+            f0, size=x.shape[-1] * self.hop_length, mode="linear", align_corners=True
         ).transpose(1, 2)
 
         with torch.no_grad():
@@ -125,7 +127,7 @@ class HiFiPLN(nn.Module):
         x = self.conv_post(x)
         x = torch.tanh(x)
 
-        return x, vuv, power
+        return x
 
     def load_vuv(self, ckpt_path):
         cp_dict = torch.load(ckpt_path, map_location="cpu")
@@ -138,22 +140,23 @@ class HiFiPLN(nn.Module):
             }
         )
 
+        for module in self.vuv.modules():
+            if hasattr(module, "weight") and is_parametrized(module, "weight"):
+                remove_parametrizations(module, "weight")
+
         for param in self.vuv.parameters():
             param.requires_grad = False
 
-    def load_power(self, ckpt_path):
-        cp_dict = torch.load(ckpt_path, map_location="cpu")
+    def power(self, x):
+        x = torch.exp(x) ** 2
 
-        self.power.load_state_dict(
-            {
-                k.replace("power_estimator.", ""): v
-                for k, v in cp_dict["state_dict"].items()
-                if k.startswith("power_estimator.")
-            }
-        )
+        power = 2 * torch.sum(x, axis=-2, keepdims=True) / self.n_mels**2
+        power = torch.sqrt(power)
+        power = power * 8.28
 
-        for param in self.power.parameters():
-            param.requires_grad = False
+        power = torch.clamp(power, 0.0, 1.0)
+
+        return power
 
     def remove_parametrizations(self):
         param = 0
@@ -178,27 +181,26 @@ class SourceNoise(nn.Module):
         self.tanh = nn.Tanh()
 
     def forward(self, f0, power, vuv):
-        sines = self.linear(self.sines(f0))
-        noise = torch.rand_like(sines)
+        sines = F.tanh(self.linear(self.sines(f0)))
+        noise = torch.randn_like(sines)
 
         vuv = F.sigmoid(vuv)
 
-        vuv_amp = F.interpolate(vuv, size=sines.shape[-2], mode="linear").transpose(
-            1, 2
-        )
-        power_amp = F.interpolate(power, size=sines.shape[-2], mode="linear").transpose(
-            1, 2
-        )
+        vuv_amp = F.interpolate(
+            vuv, size=sines.shape[-2], mode="linear", align_corners=True
+        ).transpose(1, 2)
+        power_amp = F.interpolate(
+            power, size=sines.shape[-2], mode="linear", align_corners=True
+        ).transpose(1, 2)
 
-        sines *= vuv_amp
-        noise_amp = vuv_amp * self.noise_amp + (1 - vuv_amp) * self.sine_amp
+        sines = sines * vuv_amp
+        noise_amp = vuv_amp * self.noise_amp + (1 - vuv_amp) * self.sine_amp / 3
         noise *= noise_amp
 
         source = sines + noise
+        source = F.tanh(source) * power_amp
 
-        source = source * power_amp
-
-        return self.tanh(source)
+        return source
 
 
 class SineGen(nn.Module):
