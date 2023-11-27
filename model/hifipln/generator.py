@@ -13,6 +13,18 @@ from model.vuv.model import VUVEstimator
 from ..utils import init_weights
 
 
+@torch.jit.script
+def get_power(x, n_mels):
+    power = (
+        torch.sqrt(2 * torch.sum(torch.exp(x) ** 2, dim=-2, keepdim=True) / n_mels**2)
+        * 8.28
+    )
+
+    power = torch.clamp(power, 0.0, 1.0)
+
+    return power
+
+
 class HiFiPLN(nn.Module):
     def __init__(self, config: DictConfig):
         super().__init__()
@@ -101,7 +113,7 @@ class HiFiPLN(nn.Module):
 
         with torch.no_grad():
             vuv = self.vuv(x)
-            power = self.power(x)
+            power = get_power(x, torch.tensor(self.n_mels))
 
         source = self.source(f0, power, vuv)
         source = source.transpose(1, 2)
@@ -146,17 +158,6 @@ class HiFiPLN(nn.Module):
 
         for param in self.vuv.parameters():
             param.requires_grad = False
-
-    def power(self, x):
-        x = torch.exp(x) ** 2
-
-        power = 2 * torch.sum(x, axis=-2, keepdims=True) / self.n_mels**2
-        power = torch.sqrt(power)
-        power = power * 8.28
-
-        power = torch.clamp(power, 0.0, 1.0)
-
-        return power
 
     def remove_parametrizations(self):
         param = 0
