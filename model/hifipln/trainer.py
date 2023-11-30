@@ -39,6 +39,31 @@ class HiFiPlnTrainer(pl.LightningModule):
 
         self.automatic_optimization = False
 
+        finetune = config.get("finetune", None)
+        if finetune:
+            cp_dict = torch.load(finetune, map_location="cpu")
+            self.generator.load_state_dict(
+                {
+                    k.replace("generator.", ""): v
+                    for k, v in cp_dict["state_dict"].items()
+                    if k.startswith("generator.")
+                }
+            )
+            self.mpd.load_state_dict(
+                {
+                    k.replace("mpd.", ""): v
+                    for k, v in cp_dict["state_dict"].items()
+                    if k.startswith("mpd.")
+                }
+            )
+            self.mrd.load_state_dict(
+                {
+                    k.replace("mrd.", ""): v
+                    for k, v in cp_dict["state_dict"].items()
+                    if k.startswith("mrd.")
+                }
+            )
+
     def configure_optimizers(self):
         optim_g = torch.optim.AdamW(
             filter(lambda p: p.requires_grad, self.generator.parameters()),
@@ -285,7 +310,9 @@ class HiFiPlnTrainer(pl.LightningModule):
         loss_stft = self.stft_loss(audios, gen_audio, mel_lens)
         loss_mel = F.l1_loss(mels, gen_audio_mel)
 
-        loss_valid = loss_mel + loss_stft
+        loss_aud = F.l1_loss(gen_audio, audios[:, :, : gen_audio.shape[2]])
+
+        loss_valid = loss_mel + loss_aud
 
         self.log(
             "valid/loss_stft",
@@ -301,6 +328,17 @@ class HiFiPlnTrainer(pl.LightningModule):
         self.log(
             "valid/loss_mel",
             loss_mel,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            "valid/loss_aud",
+            loss_aud,
             on_step=False,
             on_epoch=True,
             prog_bar=False,
