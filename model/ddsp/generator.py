@@ -1,0 +1,114 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from omegaconf import DictConfig
+from torch.nn.utils.parametrize import is_parametrized, remove_parametrizations
+
+from .mel2control import Mel2Control
+from .stft import STFT
+
+
+class DDSP(nn.Module):
+    def __init__(self, config: DictConfig) -> None:
+        super().__init__()
+
+        self.sample_rate = config.sample_rate
+        self.n_mels = config.n_mels
+        self.n_fft = config.n_fft
+        self.hop_length = config.hop_length
+        self.win_length = config.win_length
+        self.harmonic = config.model_ddsp.harmonic
+        self.window = torch.hann_window(self.win_length)
+        self.mode = config.model_ddsp.type
+
+        assert self.mode in ("combsub",)
+
+        self.stft = STFT(
+            self.n_fft, self.hop_length, self.win_length, self.window, center=True
+        )
+
+        # Mel2Control
+        split_map = {
+            "harmonic_phase": self.win_length // 2 + 1,
+            "noise_magnitude": self.win_length // 2 + 1,
+            "harmonic_magnitude": self.win_length // 2 + 1,
+        }
+
+        self.mel2ctrl = Mel2Control(self.n_mels, split_map)
+
+    def forward(self, mel_frames, f0_frames, max_upsample_dim=32):
+        """
+        mel_frames: B x n_frames x n_mels
+        f0_frames: B x n_frames x 1
+        """
+        if f0_frames.ndim == 2:
+            f0_frames = f0_frames[:, None]
+        mel_frames = mel_frames.transpose(-1, -2)
+        f0 = F.interpolate(
+            f0_frames,
+            scale_factor=self.hop_length,
+            mode="linear",
+            align_corners=True,
+        ).transpose(1, 2)
+        x = torch.cumsum(f0.double() / self.sample_rate, axis=1)
+        x = x - torch.round(x)
+        x = x.to(f0)
+
+        phase = 2 * torch.pi * x
+        phase_frames = phase[:, :: self.hop_length, :]
+
+        # parameter prediction
+        ctrls = self.mel2ctrl(mel_frames, phase_frames)
+
+        harmonic = self.combsub(f0, x, ctrls)
+
+        noise_param = torch.exp(ctrls["noise_magnitude"]) / 128
+        noise_param = torch.cat((noise_param, noise_param[:, -1:, :]), 1)
+        noise_param = noise_param.permute(0, 2, 1)
+
+        # noise part filter
+        noise = torch.rand_like(harmonic).to(noise_param) * 2 - 1
+        noise_real, noise_imag = self.stft.stft(noise)
+
+        noise_real = noise_real * noise_param
+        noise_imag = noise_imag * noise_param
+        noise = self.stft.istft(noise_real, noise_imag, harmonic.shape[-1])
+
+        signal = harmonic + noise
+        signal = F.tanh(signal)
+
+        return signal.unsqueeze(-2)
+
+    def combsub(self, f0, x, ctrls):
+        src_allpass = ctrls["harmonic_phase"]
+        src_allpass = torch.cat((src_allpass, src_allpass[:, -1:, :]), 1)
+        src_allpass = src_allpass.permute(0, 2, 1)
+        src_param = torch.exp(ctrls["harmonic_magnitude"])
+        src_param = torch.cat((src_param, src_param[:, -1:, :]), 1)
+        src_param = src_param.permute(0, 2, 1)
+
+        # combtooth exciter signal
+        combtooth = torch.sinc(self.sample_rate * x / (f0 + 1e-8))
+        combtooth = combtooth.squeeze(-1)
+
+        # harmonic part filter
+        harmonic_real, harmonic_imag = self.stft.stft(combtooth)
+        mags = torch.sqrt(harmonic_real**2 + harmonic_imag**2)
+        phase = torch.atan2(harmonic_imag, harmonic_real)
+
+        mags = mags * src_param
+        phase = phase + src_allpass
+
+        harmonic_real = mags * torch.cos(phase)
+        harmonic_imag = mags * torch.sin(phase)
+        harmonic = self.stft.istft(harmonic_real, harmonic_imag, combtooth.shape[-1])
+
+        return harmonic
+
+    def remove_parametrizations(self):
+        param = 0
+        for module in self.modules():
+            if hasattr(module, "weight") and is_parametrized(module, "weight"):
+                param += 1
+                remove_parametrizations(module, "weight")
+        print(f"Removed {param} parametrizations.")

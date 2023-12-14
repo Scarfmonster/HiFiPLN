@@ -1,0 +1,62 @@
+type: "DDSP"
+precision: "32"
+val_check: 2000
+sample_rate: 44100
+f_min: 40
+f_max: 16000
+n_mels: 128
+hop_length: 512
+win_length: 2048
+n_fft: 2048
+lr: 0.0004
+lr_decay: 0.999
+adam_b1: 0.8
+adam_b2: 0.99
+dataset:
+  train:
+    path: "dataset/train"
+    segment_length: 32768
+    pitch_shift: [-12, 12]
+    loudness_shift: [0.25, 1.0]
+  valid:
+    path: "dataset/valid"
+    segment_length: Null
+    pitch_shift: Null
+    loudness_shift: Null
+dataloader:
+  train:
+    batch_size: 32
+    shuffle: True
+    num_workers: 8
+    pin_memory: True
+    drop_last: True
+    persistent_workers: True
+  valid:
+    batch_size: 4
+    shuffle: False
+    num_workers: 4
+    pin_memory: True
+    drop_last: True
+    persistent_workers: True
+model:
+  input_noise: 0.01
+  use_discriminator: False
+model_ddsp:
+  type: "combsub"
+  harmonic: 128
+mpd:
+  periods:  [2, 3, 5, 7, 11]
+  kernel_size: 5
+  stride: 3
+  lrelu_slope: 0.1
+mrd:
+  resolutions: [[1024, 120, 600], [2048, 240, 1200], [512, 50, 240]] # (filter_length, hop_length, win_length)
+  lrelu_slope: 0.1
+preprocessing:
+  f0_min: 40
+  f0_max: 1400
+  pitch_extractor:
+    name: "ParselmouthPE"
+    keep_zeros: False
+  spectogram: False
+  vuv: False

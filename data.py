@@ -1,12 +1,12 @@
-from pathlib import Path
-from omegaconf import DictConfig
-from torch.utils.data import Dataset
 import os
+
 import numpy as np
-from torchaudio.transforms import MelSpectrogram
-from torchaudio.functional import resample, highpass_biquad
-from torch.nn.functional import interpolate
 import torch
+from omegaconf import DictConfig
+from torch.nn.functional import interpolate
+from torch.utils.data import Dataset
+from torchaudio.functional import highpass_biquad, resample
+from torchaudio.transforms import MelSpectrogram
 
 
 class VocoderDataset(Dataset):
@@ -72,15 +72,16 @@ class VocoderDataset(Dataset):
 
                 pitch *= 2 ** (pitch_steps / 12)
 
-        pitch = interpolate(
-            pitch[None, None, :], audio.shape[-1], mode="linear", align_corners=True
-        )[0, 0, :]
+        pitch = pitch[None, None, :]
 
         if self.segment_length and audio.shape[-1] > self.segment_length:
+            pitch = interpolate(
+                pitch, audio.shape[-1], mode="linear", align_corners=True
+            )
             audio_length = audio.shape[-1]
             start = np.random.randint(0, audio.shape[-1] - self.segment_length + 1)
             audio = audio[start : start + self.segment_length]
-            pitch = pitch[start : start + self.segment_length]
+            pitch = pitch[:, :, start : start + self.segment_length]
 
             if self.return_vuv and vuv is not None:
                 vuv = interpolate(
@@ -94,6 +95,13 @@ class VocoderDataset(Dataset):
                     align_corners=True,
                 )[0, 0, :]
                 vuv = torch.where(vuv > 0.5, 1, 0)
+
+        pitch = interpolate(
+            pitch,
+            audio.shape[-1] // self.hop_length,
+            mode="linear",
+            align_corners=True,
+        )[0, 0, :]
 
         if self.loudness_shift is not None:
             max_loudness = torch.max(torch.abs(audio))

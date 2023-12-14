@@ -1,13 +1,37 @@
-import shutil
-import urllib
-from pathlib import Path
 import argparse
-from omegaconf import DictConfig, OmegaConf
-import lightning as pl
+import shutil
+from pathlib import Path
 
+import onnxscript
 import torch
+from omegaconf import DictConfig, OmegaConf
+from onnxscript.onnx_opset import opset17 as op
+from torch.onnx._internal import jit_utils
 
+from model.ddsp.generator import DDSP
 from model.hifipln.generator import HiFiPLN
+
+custom_opset = onnxscript.values.Opset(domain="onnx-script", version=1)
+
+
+@onnxscript.script(custom_opset)
+def Sinc(X):
+    piX = op.CastLike(3.141592653589793, X)
+    sinc = op.Sin(piX * X) / (piX * X)
+    zero = op.CastLike(0, X)
+    one = op.CastLike(1, X)
+    return op.Where(X == zero, one, sinc)
+
+
+def custom_sinc(g: jit_utils.GraphContext, X):
+    return g.onnxscript_op(Sinc, X).setType(X.type())
+
+
+torch.onnx.register_custom_op_symbolic(
+    symbolic_name="aten::sinc",
+    symbolic_fn=custom_sinc,
+    opset_version=17,
+)
 
 
 class ExportableHiFiPLN(torch.nn.Module):
@@ -15,23 +39,53 @@ class ExportableHiFiPLN(torch.nn.Module):
         super().__init__()
         self.model = HiFiPLN(config)
 
-        cp_dict = torch.load(ckpt_path, map_location="cpu")
+        if ckpt_path is not None:
+            cp_dict = torch.load(ckpt_path, map_location="cpu")
 
-        if "state_dict" not in cp_dict:
-            self.model.load_state_dict(cp_dict["generator"])
-        else:
-            self.model.load_state_dict(
-                {
-                    k.replace("generator.", ""): v
-                    for k, v in cp_dict["state_dict"].items()
-                    if k.startswith("generator.")
-                }
-            )
+            if "state_dict" not in cp_dict:
+                self.model.load_state_dict(cp_dict["generator"])
+            else:
+                self.model.load_state_dict(
+                    {
+                        k.replace("generator.", ""): v
+                        for k, v in cp_dict["state_dict"].items()
+                        if k.startswith("generator.")
+                    }
+                )
 
         self.model.eval()
         self.model.remove_parametrizations()
 
-    def forward(self, mel: torch.Tensor, f0: torch.Tensor):
+    def forward(self, mel: torch.FloatTensor, f0: torch.FloatTensor):
+        mel = mel.transpose(-1, -2)
+        wav, ddsp = self.model(mel, f0)
+
+        return ddsp
+
+
+class ExportableDDSP(torch.nn.Module):
+    def __init__(self, config: DictConfig, ckpt_path):
+        super().__init__()
+        self.model = DDSP(config)
+
+        if ckpt_path is not None:
+            cp_dict = torch.load(ckpt_path, map_location="cpu")
+
+            if "state_dict" not in cp_dict:
+                self.model.load_state_dict(cp_dict["generator"])
+            else:
+                self.model.load_state_dict(
+                    {
+                        k.replace("generator.", ""): v
+                        for k, v in cp_dict["state_dict"].items()
+                        if k.startswith("generator.")
+                    }
+                )
+
+        self.model.eval()
+        self.model.remove_parametrizations()
+
+    def forward(self, mel: torch.FloatTensor, f0: torch.FloatTensor):
         mel = mel.transpose(-1, -2)
         wav = self.model(mel, f0)
 
@@ -47,31 +101,12 @@ def main(input_file, output_path, config):
     output_path.mkdir(parents=True, exist_ok=True)
     print(f"Exporting {input_file} to {output_path}")
 
-    checkpoint = torch.load(input_file, map_location="cpu")
-    model = checkpoint["state_dict"]
-
-    generator_params = {
-        k.replace("generator.", ""): v
-        for k, v in model.items()
-        if k.startswith("generator.")
-    }
-
-    pt_path = output_path / "model"
-    torch.save(
-        {
-            "generator": generator_params,
-        },
-        pt_path,
-    )
-
-    print(f"Exported to {pt_path}")
-
-    # shutil.copy(config, output_path / "config.yaml")
-    # print(f"Config exported")
-
     # Export ONNX
     print(f"Exporting ONNX")
-    model = ExportableHiFiPLN(config, input_file)
+    if config.type == "HiFiPLN":
+        model = ExportableHiFiPLN(config, input_file)
+    else:
+        model = ExportableDDSP(config, input_file)
     model.eval()
     print(f"Model loaded")
 
@@ -81,35 +116,26 @@ def main(input_file, output_path, config):
     torch.onnx.export(
         model,
         (mel, f0),
-        output_path / "hifipln.onnx",
+        output_path / f"{config.type.lower()}.onnx",
         input_names=["mel", "f0"],
         output_names=["waveform"],
-        opset_version=16,
+        opset_version=17,
         dynamic_axes={
             "mel": {0: "batch", 1: "n_frames"},
             "f0": {0: "batch", 1: "n_frames"},
             "waveform": {0: "batch", 2: "wave_length"},
         },
-        # training=torch.onnx.TrainingMode.TRAINING,
+        training=torch.onnx.TrainingMode.EVAL,
     )
 
     print(f"ONNX exported")
-
-    # # Export license
-    # if license:
-    #     print(f"Exporting license")
-    #     if license.startswith("http"):
-    #         urllib.request.urlretrieve(license, output_path / "LICENSE")
-    #     else:
-    #         shutil.copy(license, output_path / "LICENSE")
-    #     print(f"License exported")
 
     print(f"Exported to {output_path}")
 
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
-    argparser.add_argument("--model", type=str, required=True)
+    argparser.add_argument("--model", type=str, default=None)
     argparser.add_argument("--config", type=str, required=True)
     argparser.add_argument("--output", type=str, default=None)
 
