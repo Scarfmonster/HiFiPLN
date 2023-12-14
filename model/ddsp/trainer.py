@@ -214,7 +214,7 @@ class DDSPTrainer(pl.LightningModule):
                 scheduler_g.step()
 
     def validation_step(self, batch, batch_idx):
-        current_step = self.global_step // 2
+        current_step = self.global_step
 
         pitches, audios = (batch["pitch"], batch["audio"])
 
