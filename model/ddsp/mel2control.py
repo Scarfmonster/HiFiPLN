@@ -23,30 +23,30 @@ class Mel2Control(nn.Module):
     def __init__(self, input_channel, output_splits):
         super().__init__()
         self.output_splits = output_splits
-        self.phase_embed = nn.Linear(1, 256)
+        self.phase_embed = nn.Linear(1, 512)
         # conv in stack
         self.stack = nn.Sequential(
-            nn.Conv1d(input_channel, 256, 3, 1, 1),
-            nn.GroupNorm(4, 256),
+            nn.Conv1d(input_channel, 512, 3, 1, 1),
+            nn.GroupNorm(4, 512),
             nn.LeakyReLU(),
-            nn.Conv1d(256, 256, 3, 1, 1),
+            nn.Conv1d(512, 512, 3, 1, 1),
         )
 
         # transformer
         self.decoder = PCmer(
             num_layers=3,
             num_heads=8,
-            dim_model=256,
-            dim_keys=256,
-            dim_values=256,
+            dim_model=512,
+            dim_keys=512,
+            dim_values=512,
             residual_dropout=0.1,
             attention_dropout=0.1,
         )
-        self.norm = nn.LayerNorm(256)
+        self.norm = nn.LayerNorm(512)
 
         # out
         self.n_out = sum([v for k, v in output_splits.items()])
-        self.dense_out = weight_norm(nn.Linear(256, self.n_out))
+        self.dense_out = weight_norm(nn.Linear(512, self.n_out))
 
     def forward(self, mel, phase):
         """

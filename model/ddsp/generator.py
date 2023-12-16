@@ -27,8 +27,7 @@ class DDSP(nn.Module):
         split_map = {
             "harmonic_magnitude": self.win_length // 2 + 1,
             "harmonic_phase": self.win_length // 2 + 1,
-            "noise_real": self.win_length // 2 + 1,
-            "noise_imag": self.win_length // 2 + 1,
+            "noise_magnitude": self.win_length // 2 + 1,
         }
 
         self.mel2ctrl = Mel2Control(self.n_mels, split_map)
@@ -59,35 +58,38 @@ class DDSP(nn.Module):
 
         harmonic = self.combsub(f0, x, ctrls)
 
-        noise_param_real = torch.exp(ctrls["noise_real"]) / 128
-        noise_param_real = torch.cat((noise_param_real, noise_param_real[:, -1:, :]), 1)
-        noise_param_real = noise_param_real.permute(0, 2, 1)
-        noise_param_imag = torch.exp(ctrls["noise_imag"]) / 128
-        noise_param_imag = torch.cat((noise_param_imag, noise_param_imag[:, -1:, :]), 1)
-        noise_param_imag = noise_param_imag.permute(0, 2, 1)
+        noise_param = torch.exp(ctrls["noise_magnitude"]) / 128
+        noise_param = torch.cat((noise_param, noise_param[:, -1:, :]), 1)
+        noise_param = noise_param.permute(0, 2, 1)
 
         # noise part filter
-        noise = torch.rand_like(harmonic).to(noise_param_real) * 2 - 1
+        noise = torch.rand_like(harmonic).to(noise_param) * 2 - 1
         noise_real, noise_imag = self.stft.stft(noise)
+        mags = torch.sqrt(noise_real**2 + noise_imag**2)
+        phase = torch.atan2(noise_imag, noise_real)
 
-        noise_real = noise_real * noise_param_real
-        noise_imag = noise_imag * noise_param_imag
+        mags = mags * noise_param
+
+        noise_real = mags * torch.cos(phase)
+        noise_imag = mags * torch.sin(phase)
         noise = self.stft.istft(noise_real, noise_imag, harmonic.shape[-1])
 
+        harmonic = harmonic.clamp(-1, 1)
+        noise = noise.clamp(-1, 1)
+
         signal = harmonic + noise
-        # signal = F.tanh(signal)
         signal = signal.clamp(-1, 1)
 
         return signal.unsqueeze(-2), (
-            harmonic.clamp(-1, 1).unsqueeze(-2),
-            noise.clamp(-1, 1).unsqueeze(-2),
+            harmonic.unsqueeze(-2),
+            noise.unsqueeze(-2),
         )
 
     def combsub(self, f0, x, ctrls):
         src_allpass = ctrls["harmonic_phase"]
         src_allpass = torch.cat((src_allpass, src_allpass[:, -1:, :]), 1)
         src_allpass = src_allpass.permute(0, 2, 1)
-        src_param = torch.exp(ctrls["harmonic_magnitude"])
+        src_param = torch.exp(ctrls["harmonic_magnitude"]) / 128
         src_param = torch.cat((src_param, src_param[:, -1:, :]), 1)
         src_param = src_param.permute(0, 2, 1)
 
@@ -102,6 +104,7 @@ class DDSP(nn.Module):
 
         mags = mags * src_param
         phase = phase + src_allpass
+        phase = phase.clamp(-torch.pi, torch.pi)
 
         harmonic_real = mags * torch.cos(phase)
         harmonic_imag = mags * torch.sin(phase)

@@ -28,7 +28,9 @@ class DDSPTrainer(pl.LightningModule):
         else:
             self.ddsp_loss = RSSLoss(256, 2048, 4)
 
-        self.uv_loss = UVLoss(config.hop_length)
+        self.uv_loss = UVLoss(
+            config.hop_length, uv_tolerance=config.model_ddsp.uv_tolerance
+        )
 
         self.stft_config = config.mrd.resolutions
 
@@ -170,13 +172,8 @@ class DDSPTrainer(pl.LightningModule):
             loss_gen = self.ddsp_loss(audio, gen_audio)
 
         loss_uv = self.uv_loss(gen_audio, harmonic, 1 - vuv)
-        loss_uv_scale = 1.0
 
-        if current_step > self.config.model_ddsp.detach_uv_steps:
-            # loss_uv = loss_uv.detach()
-            loss_uv_scale = 0.1
-
-        loss_gen = loss_gen + (loss_uv * loss_uv_scale)
+        loss_gen = loss_gen + loss_uv
 
         self.manual_backward(loss_gen)
         optim_g.step()
