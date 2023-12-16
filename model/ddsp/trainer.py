@@ -1,5 +1,4 @@
 import itertools
-from typing import Any
 
 import lightning as pl
 import matplotlib.pyplot as plt
@@ -7,7 +6,6 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 
-from model.ddsp.loss import MSSLoss, RSSLoss
 from model.hifipln.discriminator import (
     MultiPeriodDiscriminator,
     MultiResolutionDiscriminator,
@@ -15,6 +13,7 @@ from model.hifipln.discriminator import (
 
 from ..utils import STFT, plot_mel
 from .generator import DDSP
+from .loss import MSSLoss, RSSLoss, UVLoss
 
 
 class DDSPTrainer(pl.LightningModule):
@@ -23,9 +22,13 @@ class DDSPTrainer(pl.LightningModule):
         self.config = config
 
         self.generator = DDSP(config)
-        if self.config.model.use_discriminator:
+        if self.config.model_ddsp.use_discriminator:
             self.mpd = MultiPeriodDiscriminator(config)
             self.mrd = MultiResolutionDiscriminator(config)
+        else:
+            self.ddsp_loss = RSSLoss(256, 2048, 4)
+
+        self.uv_loss = UVLoss(config.hop_length)
 
         self.stft_config = config.mrd.resolutions
 
@@ -39,7 +42,6 @@ class DDSPTrainer(pl.LightningModule):
             n_mels=config.n_mels,
         )
 
-        self.ddsp_loss = RSSLoss(256, 2048, 4)
         self.mss_loss = MSSLoss([2048, 1024, 512, 256])
 
         self.automatic_optimization = False
@@ -56,7 +58,7 @@ class DDSPTrainer(pl.LightningModule):
             optim_g, self.config.lr_decay
         )
 
-        if self.config.model.use_discriminator:
+        if self.config.model_ddsp.use_discriminator:
             optim_d = torch.optim.AdamW(
                 itertools.chain(self.mrd.parameters(), self.mpd.parameters()),
                 lr=self.config.lr,
@@ -100,58 +102,52 @@ class DDSPTrainer(pl.LightningModule):
         return mels
 
     def training_step(self, batch, batch_idx):
-        if self.config.model.use_discriminator:
+        if self.config.model_ddsp.use_discriminator:
             optim_g, optim_d = self.optimizers()
+            current_step = self.global_step // 2
         else:
             optim_g = self.optimizers()
+            current_step = self.global_step
 
-        pitches, audio = (
+        pitches, audio, vuv = (
             batch["pitch"].float(),
             batch["audio"].float(),
+            batch["vuv"].float(),
         )
 
         mel_lens = batch["audio_lens"] // self.config["hop_length"]
         mels = self.get_mels(audio)[:, :, : mel_lens.max()]
         gen_mels = mels + torch.rand_like(mels) * self.config.model.input_noise
-        gen_audio = self.generator(gen_mels, pitches)
+        gen_audio, (harmonic, noise) = self.generator(gen_mels, pitches)
 
         # Generator
         optim_g.zero_grad(set_to_none=True)
 
-        ddsp_loss = self.ddsp_loss(audio, gen_audio)
-        loss_gen_all = ddsp_loss
-
-        if self.config.model.use_discriminator:
+        if self.config.model_ddsp.use_discriminator:
             real_mpd = self.mpd(audio)
             real_mrd = self.mrd(audio)
             gen_mpd = self.mpd(gen_audio)
             gen_mrd = self.mrd(gen_audio)
 
             gen_loss = 0.0
+            feat_loss = 0.0
 
-            for (_, score_fake), (_, _) in zip(gen_mpd + gen_mrd, real_mpd + real_mrd):
+            for (feat_fake, score_fake), (feat_real, _) in zip(
+                gen_mpd + gen_mrd, real_mpd + real_mrd
+            ):
+                f_loss = 0.0
+                for fake, real in zip(feat_fake, feat_real):
+                    f_loss += F.l1_loss(fake, real.detach())
+                feat_loss += f_loss
+
                 gen_loss += F.binary_cross_entropy_with_logits(
                     score_fake, torch.ones_like(score_fake)
                 )
 
-            loss_gen_all = ddsp_loss + gen_loss
-
-        self.manual_backward(loss_gen_all)
-        optim_g.step()
-
-        if self.config.model.use_discriminator:
-            self.log(
-                f"train/loss_ddsp",
-                ddsp_loss,
-                on_step=True,
-                on_epoch=False,
-                prog_bar=False,
-                logger=True,
-                batch_size=pitches.shape[0],
-            )
+            loss_gen = gen_loss + feat_loss
 
             self.log(
-                f"train/loss_gen",
+                f"train/loss_gan",
                 gen_loss,
                 on_step=True,
                 on_epoch=False,
@@ -160,9 +156,44 @@ class DDSPTrainer(pl.LightningModule):
                 batch_size=pitches.shape[0],
             )
 
+            self.log(
+                f"train/loss_feat",
+                feat_loss,
+                on_step=True,
+                on_epoch=False,
+                prog_bar=False,
+                logger=True,
+                batch_size=pitches.shape[0],
+            )
+
+        else:
+            loss_gen = self.ddsp_loss(audio, gen_audio)
+
+        loss_uv = self.uv_loss(gen_audio, harmonic, 1 - vuv)
+        loss_uv_scale = 1.0
+
+        if current_step > self.config.model_ddsp.detach_uv_steps:
+            # loss_uv = loss_uv.detach()
+            loss_uv_scale = 0.1
+
+        loss_gen = loss_gen + (loss_uv * loss_uv_scale)
+
+        self.manual_backward(loss_gen)
+        optim_g.step()
+
         self.log(
-            f"train/loss_all",
-            loss_gen_all,
+            f"train/loss_uv",
+            loss_uv,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            f"train/loss_gen",
+            loss_gen,
             on_step=True,
             on_epoch=False,
             prog_bar=True,
@@ -170,7 +201,7 @@ class DDSPTrainer(pl.LightningModule):
             batch_size=pitches.shape[0],
         )
 
-        if self.config.model.use_discriminator:
+        if self.config.model_ddsp.use_discriminator:
             # Discriminator Loss
             optim_d.zero_grad(set_to_none=True)
 
@@ -205,7 +236,7 @@ class DDSPTrainer(pl.LightningModule):
 
         if self.trainer.is_last_batch:
             # Manual LR Scheduler
-            if self.config.model.use_discriminator:
+            if self.config.model_ddsp.use_discriminator:
                 scheduler_g, scheduler_d = self.lr_schedulers()
                 scheduler_g.step()
                 scheduler_d.step()
@@ -214,14 +245,21 @@ class DDSPTrainer(pl.LightningModule):
                 scheduler_g.step()
 
     def validation_step(self, batch, batch_idx):
-        current_step = self.global_step
+        if self.config.model_ddsp.use_discriminator:
+            current_step = self.global_step // 2
+        else:
+            current_step = self.global_step
 
-        pitches, audios = (batch["pitch"], batch["audio"])
+        pitches, audios, vuv = (
+            batch["pitch"].float(),
+            batch["audio"].float(),
+            batch["vuv"].float(),
+        )
 
         mel_lens = batch["audio_lens"] // self.config.hop_length
 
         mels = self.get_mels(audios)[:, :, : mel_lens.max()]
-        gen_audio = self.generator(mels, pitches)
+        gen_audio, (harmonic, noise) = self.generator(mels, pitches)
         gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
 
         max_len = min(audios.shape[-1], gen_audio.shape[-1])
@@ -229,8 +267,11 @@ class DDSPTrainer(pl.LightningModule):
         loss_stft = self.mss_loss(audios[:, 0, :max_len], gen_audio[:, 0, :max_len])
         loss_mel = F.l1_loss(mels, gen_audio_mel)
         loss_aud = F.l1_loss(gen_audio[:, 0, :max_len], audios[:, 0, :max_len])
+        loss_uv = self.uv_loss(
+            gen_audio[:, :, :max_len], harmonic[:, :, :max_len], 1 - vuv
+        )
 
-        loss_valid = loss_mel + loss_aud + loss_stft
+        loss_valid = loss_mel + loss_aud + loss_stft + loss_uv
 
         self.log(
             "valid/loss_stft",
@@ -263,6 +304,16 @@ class DDSPTrainer(pl.LightningModule):
         )
 
         self.log(
+            f"valid/loss_uv",
+            loss_uv,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
             "valid/loss",
             loss_valid,
             on_step=False,
@@ -278,6 +329,8 @@ class DDSPTrainer(pl.LightningModule):
                 gen_mel,
                 audio,
                 gen_audio,
+                harmonic_audio,
+                noise_audio,
                 mel_len,
                 audio_len,
             ) in enumerate(
@@ -286,6 +339,8 @@ class DDSPTrainer(pl.LightningModule):
                     gen_audio_mel.cpu().numpy(),
                     audios.cpu().type(torch.float32).numpy(),
                     gen_audio.type(torch.float32).cpu().numpy(),
+                    harmonic.type(torch.float32).cpu().numpy(),
+                    noise.type(torch.float32).cpu().numpy(),
                     mel_lens.cpu().numpy(),
                     batch["audio_lens"].cpu().numpy(),
                 )
@@ -312,6 +367,18 @@ class DDSPTrainer(pl.LightningModule):
                 self.logger.experiment.add_audio(
                     f"sample-{idx}/wavs/prediction",
                     gen_audio[0, :audio_len],
+                    global_step=current_step,
+                    sample_rate=self.config.sample_rate,
+                )
+                self.logger.experiment.add_audio(
+                    f"sample-{idx}/wavs/harmonic",
+                    harmonic_audio[0, :audio_len],
+                    global_step=current_step,
+                    sample_rate=self.config.sample_rate,
+                )
+                self.logger.experiment.add_audio(
+                    f"sample-{idx}/wavs/noise",
+                    noise_audio[0, :audio_len],
                     global_step=current_step,
                     sample_rate=self.config.sample_rate,
                 )

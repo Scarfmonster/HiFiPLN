@@ -8,8 +8,8 @@ n_mels: 128
 hop_length: 512
 win_length: 2048
 n_fft: 2048
-lr: 0.0004
-lr_decay: 0.999
+lr: 0.0002
+lr_decay: 0.99
 adam_b1: 0.8
 adam_b2: 0.99
 dataset:
@@ -18,11 +18,13 @@ dataset:
     segment_length: 32768
     pitch_shift: [-12, 12]
     loudness_shift: [0.25, 1.0]
+    return_vuv: True
   valid:
     path: "dataset/valid"
     segment_length: Null
     pitch_shift: Null
     loudness_shift: Null
+    return_vuv: True
 dataloader:
   train:
     batch_size: 32
@@ -40,10 +42,9 @@ dataloader:
     persistent_workers: True
 model:
   input_noise: 0.01
-  use_discriminator: False
 model_ddsp:
-  type: "combsub"
-  harmonic: 128
+  detach_uv_steps: 50000
+  use_discriminator: False
 mpd:
   periods:  [2, 3, 5, 7, 11]
   kernel_size: 5

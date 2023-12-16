@@ -24,6 +24,8 @@ class SSSLoss(nn.Module):
         )
 
     def forward(self, x_true, x_pred):
+        x_true = x_true.squeeze(-2)
+        x_pred = x_pred.squeeze(-2)
         S_true = self.spec(x_true) + self.eps
         S_pred = self.spec(x_pred) + self.eps
 
@@ -88,3 +90,28 @@ class RSSLoss(nn.Module):
             loss_func = self.lossdict[int(n_fft)]
             value += loss_func(x_true, x_pred)
         return value  # / self.n_scale
+
+
+class UVLoss(nn.Module):
+    def __init__(self, hop_length, eps=1e-8, uv_tolerance=0.05):
+        super().__init__()
+        self.hop_length = hop_length
+        self.eps = eps
+        self.uv_tolerance = uv_tolerance
+
+    def forward(self, signal, s_h, uv_true):
+        uv_mask = F.interpolate(
+            uv_true,
+            scale_factor=self.hop_length,
+            mode="linear",
+            align_corners=True,
+        ).squeeze(-2)[:, : signal.shape[-1]]
+        signal = signal.squeeze(-2)
+        s_h = s_h.squeeze(-2)
+        loss = torch.mean(
+            torch.linalg.norm(s_h * uv_mask, dim=1)
+            / (torch.linalg.norm(signal * uv_mask, dim=1) + self.eps)
+        )
+        if loss < self.uv_tolerance:
+            loss = loss.detach()
+        return loss

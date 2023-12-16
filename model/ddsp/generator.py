@@ -17,11 +17,7 @@ class DDSP(nn.Module):
         self.n_fft = config.n_fft
         self.hop_length = config.hop_length
         self.win_length = config.win_length
-        self.harmonic = config.model_ddsp.harmonic
         self.window = torch.hann_window(self.win_length)
-        self.mode = config.model_ddsp.type
-
-        assert self.mode in ("combsub",)
 
         self.stft = STFT(
             self.n_fft, self.hop_length, self.win_length, self.window, center=True
@@ -29,9 +25,10 @@ class DDSP(nn.Module):
 
         # Mel2Control
         split_map = {
-            "harmonic_phase": self.win_length // 2 + 1,
-            "noise_magnitude": self.win_length // 2 + 1,
             "harmonic_magnitude": self.win_length // 2 + 1,
+            "harmonic_phase": self.win_length // 2 + 1,
+            "noise_real": self.win_length // 2 + 1,
+            "noise_imag": self.win_length // 2 + 1,
         }
 
         self.mel2ctrl = Mel2Control(self.n_mels, split_map)
@@ -62,22 +59,29 @@ class DDSP(nn.Module):
 
         harmonic = self.combsub(f0, x, ctrls)
 
-        noise_param = torch.exp(ctrls["noise_magnitude"]) / 128
-        noise_param = torch.cat((noise_param, noise_param[:, -1:, :]), 1)
-        noise_param = noise_param.permute(0, 2, 1)
+        noise_param_real = torch.exp(ctrls["noise_real"]) / 128
+        noise_param_real = torch.cat((noise_param_real, noise_param_real[:, -1:, :]), 1)
+        noise_param_real = noise_param_real.permute(0, 2, 1)
+        noise_param_imag = torch.exp(ctrls["noise_imag"]) / 128
+        noise_param_imag = torch.cat((noise_param_imag, noise_param_imag[:, -1:, :]), 1)
+        noise_param_imag = noise_param_imag.permute(0, 2, 1)
 
         # noise part filter
-        noise = torch.rand_like(harmonic).to(noise_param) * 2 - 1
+        noise = torch.rand_like(harmonic).to(noise_param_real) * 2 - 1
         noise_real, noise_imag = self.stft.stft(noise)
 
-        noise_real = noise_real * noise_param
-        noise_imag = noise_imag * noise_param
+        noise_real = noise_real * noise_param_real
+        noise_imag = noise_imag * noise_param_imag
         noise = self.stft.istft(noise_real, noise_imag, harmonic.shape[-1])
 
         signal = harmonic + noise
-        signal = F.tanh(signal)
+        # signal = F.tanh(signal)
+        signal = signal.clamp(-1, 1)
 
-        return signal.unsqueeze(-2)
+        return signal.unsqueeze(-2), (
+            harmonic.clamp(-1, 1).unsqueeze(-2),
+            noise.clamp(-1, 1).unsqueeze(-2),
+        )
 
     def combsub(self, f0, x, ctrls):
         src_allpass = ctrls["harmonic_phase"]
