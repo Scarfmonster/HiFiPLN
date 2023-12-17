@@ -9,6 +9,13 @@ from .stft import STFT
 
 
 class DDSP(nn.Module):
+    """
+    DDSP (Differentiable Digital Signal Processing) module.
+
+    Args:
+        config (DictConfig): Configuration dictionary.
+    """
+
     def __init__(self, config: DictConfig) -> None:
         super().__init__()
 
@@ -34,8 +41,16 @@ class DDSP(nn.Module):
 
     def forward(self, mel_frames, f0_frames, max_upsample_dim=32):
         """
-        mel_frames: B x n_frames x n_mels
-        f0_frames: B x n_frames x 1
+        Forward pass of the DDSP module.
+
+        Args:
+            mel_frames (torch.Tensor): Mel frames of shape B x n_mels x n_frames.
+            f0_frames (torch.Tensor): F0 frames of shape B x 1 x n_frames.
+            max_upsample_dim (int): Maximum upsample dimension.
+
+        Returns:
+            torch.Tensor: The generated signal.
+            Tuple[torch.Tensor, torch.Tensor]: Tuple containing the harmonic and noise components.
         """
         if f0_frames.ndim == 2:
             f0_frames = f0_frames[:, None]
@@ -86,6 +101,17 @@ class DDSP(nn.Module):
         )
 
     def combsub(self, f0, x, ctrls):
+        """
+        The harmonic part of the signal.
+
+        Args:
+            f0 (torch.Tensor): F0 tensor.
+            x (torch.Tensor): Cumulative sum of F0 tensor.
+            ctrls (Dict[str, torch.Tensor]): Control parameters.
+
+        Returns:
+            torch.Tensor: The harmonic part of the signal.
+        """
         src_allpass = ctrls["harmonic_phase"]
         src_allpass = torch.cat((src_allpass, src_allpass[:, -1:, :]), 1)
         src_allpass = src_allpass.permute(0, 2, 1)
@@ -113,6 +139,9 @@ class DDSP(nn.Module):
         return harmonic
 
     def remove_parametrizations(self):
+        """
+        Remove parametrizations from the module.
+        """
         param = 0
         for module in self.modules():
             if hasattr(module, "weight") and is_parametrized(module, "weight"):

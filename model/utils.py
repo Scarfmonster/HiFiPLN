@@ -1,7 +1,8 @@
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
-from torchaudio.transforms import MelSpectrogram
 from librosa.filters import mel as librosa_mel_fn
+from torchaudio.transforms import MelSpectrogram
 
 
 def plot_mel(data, titles=None):
@@ -82,6 +83,39 @@ def get_mel_transform(
     )
 
     return transform
+
+
+def plot_snakes(model: torch.nn.Module, logscale=False):
+    alphas = []
+    betas = []
+    for layer in model.modules():
+        classname = layer.__class__.__name__
+        if classname in ("Snake", "SnakeBeta"):
+            alphas.append(layer.alpha.detach().cpu().numpy())
+            if hasattr(layer, "beta"):
+                betas.append(layer.beta.detach().cpu().numpy())
+
+    if logscale:
+        for i in range(len(alphas)):
+            alphas[i] = np.exp(alphas[i])
+        for i in range(len(betas)):
+            betas[i] = np.exp(betas[i])
+
+    plt.switch_backend("agg")
+    fig, ax = plt.subplots(2 if len(betas) > 0 else 1)
+    plt.tight_layout()
+    fig.set_figwidth(12)
+
+    ax[0].eventplot(alphas, orientation="vertical")
+    ax[0].set_title("Alpha", fontsize="medium")
+    ax[0].tick_params(labelsize="x-small")
+
+    if len(betas) > 0:
+        ax[1].eventplot(betas, orientation="vertical")
+        ax[1].set_title("Beta", fontsize="medium")
+        ax[1].tick_params(labelsize="x-small")
+
+    return fig
 
 
 def init_weights(m, mean=0.0, std=0.01):

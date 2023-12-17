@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.fft import rfft
 
 
 class STFT(nn.Module):
@@ -13,17 +12,29 @@ class STFT(nn.Module):
         window: torch.Tensor = None,
         center: bool = True,
     ):
+        """
+        Short-time Fourier Transform (STFT) module.
+
+        Args:
+            n_fft (int): Number of FFT points. Default is 2048.
+            hop_length (int): Hop length between consecutive frames. Default is 512.
+            win_length (int): Window length. Default is 2048.
+            window (torch.Tensor): Window function. If None, uses a rectangular window. Default is None.
+            center (bool): Whether to pad the input signal. Default is True.
+        """
         super().__init__()
 
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.win_length = win_length
-        self.window = window
         self.center = center
         self.pad_amount = self.n_fft // 2
 
+        if window is None:
+            window = torch.ones(win_length)
+
         en_k = torch.eye(self.n_fft)[:, None, :]
-        tmp = rfft(torch.eye(self.n_fft))
+        tmp = torch.fft.rfft(torch.eye(self.n_fft))
         fft_k = torch.stack([tmp.real, tmp.imag], dim=2)
         fft_k = torch.cat((fft_k[:, :, 0], fft_k[:, :, 1]), dim=1)
         ifft_k = torch.pinverse(fft_k)[:, None, :]
@@ -46,6 +57,16 @@ class STFT(nn.Module):
         self.e8 = torch.tensor(1e-8)
 
     def stft(self, x):
+        """
+        Compute the Short-time Fourier Transform (STFT) of the input signal.
+
+        Args:
+            x (torch.Tensor): Input signal tensor.
+
+        Returns:
+            real (torch.Tensor): Real part of the STFT.
+            imag (torch.Tensor): Imaginary part of the STFT.
+        """
         if x.dim() == 2:
             x = x.unsqueeze(1)
 
@@ -63,6 +84,17 @@ class STFT(nn.Module):
         return real, imag
 
     def istft(self, real, imag, length: int):
+        """
+        Compute the inverse Short-time Fourier Transform (iSTFT) of the given real and imaginary parts.
+
+        Args:
+            real (torch.Tensor): Real part of the STFT.
+            imag (torch.Tensor): Imaginary part of the STFT.
+            length (int): Length of the output signal.
+
+        Returns:
+            x (torch.Tensor): Reconstructed signal.
+        """
         x = torch.cat((real, imag), dim=1)
         frames = x.size(-1)
         x = F.conv_transpose1d(x, self.ifft_k, stride=self.hop_length)
