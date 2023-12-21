@@ -44,7 +44,7 @@ class DDSPTrainer(pl.LightningModule):
             n_mels=config.n_mels,
         )
 
-        self.mss_loss = MSSLoss([2048, 1024, 512, 256])
+        self.mss_loss = MSSLoss([2048, 1024, 512, 256, 128])
 
         self.automatic_optimization = False
 

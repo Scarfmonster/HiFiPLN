@@ -63,7 +63,7 @@ class MSSLoss(nn.Module):
         x_pred = x_pred[..., : x_true.shape[-1]]
         value = 0.0
         for loss in self.losses:
-            value += loss(x_true, x_pred)
+            value += loss(x_true, x_pred) / len(self.losses)
         return value
 
 
@@ -77,10 +77,10 @@ class RSSLoss(nn.Module):
     ):
         super().__init__()
         self.fft_min = fft_min
-        self.fft_max = fft_max
+        self.fft_max = fft_max + 1
         self.n_scale = n_scale
         self.lossdict = {}
-        for n_fft in range(fft_min, fft_max):
+        for n_fft in range(fft_min, fft_max + 1):
             self.lossdict[n_fft] = SSSLoss(n_fft, alpha, overlap, eps).to(device)
 
     def forward(self, x_pred, x_true):
@@ -88,8 +88,8 @@ class RSSLoss(nn.Module):
         n_ffts = torch.randint(self.fft_min, self.fft_max, (self.n_scale,))
         for n_fft in n_ffts:
             loss_func = self.lossdict[int(n_fft)]
-            value += loss_func(x_true, x_pred)
-        return value  # / self.n_scale
+            value += loss_func(x_true, x_pred) / self.n_scale
+        return value
 
 
 class UVLoss(nn.Module):
