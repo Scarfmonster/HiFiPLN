@@ -80,20 +80,17 @@ class DDSP(nn.Module):
         # noise part filter
         noise = torch.rand_like(harmonic).to(noise_param) * 2 - 1
         noise_real, noise_imag = self.stft.stft(noise)
-        mags = torch.sqrt(noise_real**2 + noise_imag**2)
-        phase = torch.atan2(noise_imag, noise_real)
 
-        mags = mags * noise_param
+        noise_real = noise_real * noise_param
+        noise_imag = noise_imag * noise_param
 
-        noise_real = mags * torch.cos(phase)
-        noise_imag = mags * torch.sin(phase)
         noise = self.stft.istft(noise_real, noise_imag, harmonic.shape[-1])
 
-        harmonic = harmonic.clamp(-1, 1)
-        noise = noise.clamp(-1, 1)
+        harmonic = F.hardtanh(harmonic, min_val=-1, max_val=1)
+        noise = F.hardtanh(noise, min_val=-1, max_val=1)
 
         signal = harmonic + noise
-        signal = signal.clamp(-1, 1)
+        signal = F.hardtanh(signal, min_val=-1, max_val=1)
 
         return signal.unsqueeze(-2), (
             harmonic.unsqueeze(-2),

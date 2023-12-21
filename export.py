@@ -58,9 +58,9 @@ class ExportableHiFiPLN(torch.nn.Module):
 
     def forward(self, mel: torch.FloatTensor, f0: torch.FloatTensor):
         mel = mel.transpose(-1, -2)
-        wav, ddsp = self.model(mel, f0)
+        wav, (harmonic, noise) = self.model(mel, f0)
 
-        return ddsp
+        return wav
 
 
 class ExportableDDSP(torch.nn.Module):
@@ -107,8 +107,7 @@ def main(input_file, output_path, config):
         model = ExportableHiFiPLN(config, input_file)
     else:
         model = ExportableDDSP(config, input_file)
-    model.eval()
-    print(f"Model loaded")
+    print("Model loaded")
 
     mel = torch.randn(1, 64, 128)
     f0 = torch.randn(1, 64)
@@ -137,7 +136,7 @@ if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
     argparser.add_argument("--model", type=str, default=None)
     argparser.add_argument("--config", type=str, required=True)
-    argparser.add_argument("--output", type=str, default=None)
+    argparser.add_argument("--output", type=str, required=True)
 
     args = argparser.parse_args()
 
