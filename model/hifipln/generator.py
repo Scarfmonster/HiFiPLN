@@ -1,4 +1,5 @@
-import numpy as np
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,158 +7,49 @@ from omegaconf import DictConfig
 from torch.nn.utils.parametrizations import weight_norm
 from torch.nn.utils.parametrize import is_parametrized, remove_parametrizations
 
-from model.common import ResBlock
-from model.power.model import PowerEstimator
-from model.vuv.model import VUVEstimator
+from alias.act import Activation1d
+from alias.resample import DownSample1d, UpSample1d
+from model.common import SnakeBeta, SnakeGamma, SnakeBlock
+from model.ddsp.generator import DDSP
 
 from ..utils import init_weights
-
-
-@torch.jit.script
-def get_power(x, n_mels):
-    power = (
-        torch.sqrt(2 * torch.sum(torch.exp(x) ** 2, dim=-2, keepdim=True) / n_mels**2)
-        * 8.28
-    )
-
-    power = torch.clamp(power, 0.0, 1.0)
-
-    return power
+from .source import NoiseCombSource
 
 
 class HiFiPLN(nn.Module):
     def __init__(self, config: DictConfig):
         super().__init__()
 
-        self.hop_length = config.hop_length
-        self.win_length = config.win_length
-        self.lrelu_slope = config.model.lrelu_slope
-        self.upsample_rates = config.model.upsample_rates
-        self.upsample_kernel_sizes = config.model.upsample_kernel_sizes
-        self.resblock_kernel_sizes = config.model.resblock_kernel_sizes
-        self.resblock_dilation_sizes = config.model.resblock_dilation_sizes
-        self.upsample_initial_channel = config.model.upsample_initial_channel
-        self.num_upsamples = len(config.model.upsample_rates)
-        self.num_kernels = len(config.model.resblock_kernel_sizes)
-        self.n_mels = config.n_mels
+        self.source = DDSP(config)
 
-        self.source = SourceNoise(config)
-        self.pre_conv = weight_norm(
-            nn.Conv1d(self.n_mels, self.upsample_initial_channel, 7, 1, padding=3)
-        )
-        self.noise_convs = nn.ModuleList()
+        self.load_ddsp(config.model_ddsp.checkpoint)
 
-        self.ups = nn.ModuleList()
-        for i, (u, k) in enumerate(
-            zip(
-                self.upsample_rates,
-                self.upsample_kernel_sizes,
-            )
-        ):
-            c_cur = self.upsample_initial_channel // (2 ** (i + 1))
-            self.ups.append(
-                weight_norm(
-                    nn.ConvTranspose1d(
-                        self.upsample_initial_channel // (2**i),
-                        self.upsample_initial_channel // (2 ** (i + 1)),
-                        k,
-                        u,
-                        padding=(k - u) // 2,
-                    )
-                )
-            )
-            if i + 1 < len(self.upsample_rates):
-                stride_f0 = np.prod(self.upsample_rates[i + 1 :])
-                self.noise_convs.append(
-                    weight_norm(
-                        nn.Conv1d(
-                            1,
-                            c_cur,
-                            kernel_size=stride_f0 * 2,
-                            stride=stride_f0,
-                            padding=stride_f0 // 2,
-                        )
-                    )
-                )
-            else:
-                self.noise_convs.append(weight_norm(nn.Conv1d(1, c_cur, kernel_size=1)))
-
-        self.resblocks = nn.ModuleList()
-        for i in range(len(self.ups)):
-            ch = self.upsample_initial_channel // (2 ** (i + 1))
-            for j, (k, d) in enumerate(
-                zip(
-                    self.resblock_kernel_sizes,
-                    self.resblock_dilation_sizes,
-                )
-            ):
-                self.resblocks.append(ResBlock(ch, k, d, self.lrelu_slope))
-
-        self.conv_post = weight_norm(nn.Conv1d(ch, 1, 7, 1, padding=3))
-        self.pre_conv.apply(init_weights)
-        self.noise_convs.apply(init_weights)
-        self.ups.apply(init_weights)
-        self.resblocks.apply(init_weights)
-        self.conv_post.apply(init_weights)
-
-        self.vuv = VUVEstimator(config)
-        self.load_vuv(config.model.vuv_ckpt)
+        self.harmonic_block = PLNBlock(config)
+        self.noise_block = PLNBlock(config)
 
     def forward(self, x, f0):
-        if f0.ndim == 2:
-            f0 = f0[:, None]
+        _, (harmonic, noise) = self.source(x, f0)
 
-        f0 = F.interpolate(
-            f0, size=x.shape[-1] * self.hop_length, mode="linear", align_corners=True
-        ).transpose(1, 2)
+        harmonic = self.harmonic_block(x, harmonic)
+        noise = self.noise_block(x, noise)
 
-        with torch.no_grad():
-            vuv = self.vuv(x)
-            power = get_power(x, torch.tensor(self.n_mels))
+        waveform = harmonic + noise
+        waveform = F.hardtanh(waveform, -1, 1)
 
-        source = self.source(f0, power, vuv)
-        source = source.transpose(1, 2)
+        return waveform, (harmonic, noise)
 
-        x = self.pre_conv(x)
-
-        for i in range(self.num_upsamples):
-            x = F.leaky_relu(x, self.lrelu_slope, inplace=True)
-            x = self.ups[i](x)
-            x_source = self.noise_convs[i](source)
-            x = x + x_source
-            xs = None
-
-            for j in range(self.num_kernels):
-                if xs is None:
-                    xs = self.resblocks[i * self.num_kernels + j](x)
-                else:
-                    xs += self.resblocks[i * self.num_kernels + j](x)
-
-            x = xs / self.num_kernels
-
-        x = F.leaky_relu(x, inplace=True)
-        x = self.conv_post(x)
-        x = torch.tanh(x)
-
-        return x
-
-    def load_vuv(self, ckpt_path):
+    def load_ddsp(self, ckpt_path):
         cp_dict = torch.load(ckpt_path, map_location="cpu")
-
-        self.vuv.load_state_dict(
+        self.source.load_state_dict(
             {
-                k.replace("estimator.", ""): v
+                k.replace("generator.", ""): v
                 for k, v in cp_dict["state_dict"].items()
-                if k.startswith("estimator.")
+                if k.startswith("generator.")
             }
         )
-
-        for module in self.vuv.modules():
-            if hasattr(module, "weight") and is_parametrized(module, "weight"):
-                remove_parametrizations(module, "weight")
-
-        for param in self.vuv.parameters():
-            param.requires_grad = False
+        self.source.remove_parametrizations()
+        self.source.eval()
+        self.source.requires_grad_(False)
 
     def remove_parametrizations(self):
         param = 0
@@ -167,94 +59,216 @@ class HiFiPLN(nn.Module):
                 remove_parametrizations(module, "weight")
         print(f"Removed {param} parametrizations.")
 
+    def prune(self):
+        self.harmonic_block.prune()
+        self.noise_block.prune()
 
-class SourceNoise(nn.Module):
+
+class PLNBlock(nn.Module):
     def __init__(self, config: DictConfig):
         super().__init__()
+        self.n_mels = config.n_mels
+        self.snake_log = config.model.snake_log
+        self.upsample_initial = config.model.upsample_initial
+        self.upsample_rates = config.model.upsample_rates
+        self.upsample_kernels = config.model.upsample_kernels
+        self.kernel_sizes = config.model.kernel_sizes
+        self.dilation_sizes = config.model.dilation_sizes
+        self.kernels = len(self.kernel_sizes)
 
-        self.noise_amp = config.model.noise_amp
-        self.sine_amp = config.model.sine_amp
-        self.lrelu_slope = config.model.lrelu_slope
-        self.harmonic_num = config.model.harmonic_num
+        assert len(self.upsample_rates) == len(self.upsample_kernels)
 
-        self.sines = SineGen(config)
-        self.linear = nn.Linear(self.harmonic_num + 1, 1)
-        self.tanh = nn.Tanh()
+        self.pre_conv = weight_norm(
+            nn.Conv1d(self.n_mels, self.upsample_initial, 7, padding=3)
+        )
 
-    def forward(self, f0, power, vuv):
-        sines = F.tanh(self.linear(self.sines(f0)))
-        noise = torch.randn_like(sines)
+        self.upsamples = nn.ModuleList()
+        self.convs = nn.ModuleList()
+        self.downsamples = nn.ModuleList()
+        self.source_conv = nn.ModuleList()
+        self.snakes = nn.ModuleList()
 
-        vuv = F.sigmoid(vuv)
+        snake = SnakeGamma
 
-        vuv_amp = F.interpolate(
-            vuv, size=sines.shape[-2], mode="linear", align_corners=True
-        ).transpose(1, 2)
-        power_amp = F.interpolate(
-            power, size=sines.shape[-2], mode="linear", align_corners=True
-        ).transpose(1, 2)
+        for i in range(len(self.upsample_rates)):
+            in_ch = self.upsample_initial // (2**i)
+            out_ch = self.upsample_initial // (2 ** (i + 1))
+            kernel = self.upsample_kernels[i]
+            rate = self.upsample_rates[i]
 
-        sines = sines * vuv_amp
-        noise_amp = vuv_amp * self.noise_amp + (1 - vuv_amp) * self.sine_amp / 3
-        noise *= noise_amp
+            self.upsamples.append(
+                weight_norm(
+                    nn.ConvTranspose1d(
+                        in_ch,
+                        out_ch,
+                        kernel,
+                        rate,
+                        padding=(kernel - rate) // 2,
+                    )
+                )
+            )
+            for k, d in zip(self.kernel_sizes, self.dilation_sizes):
+                self.convs.append(
+                    SnakeBlock(
+                        out_ch,
+                        kernel_size=k,
+                        dilation=d,
+                        snake_log=self.snake_log,
+                    )
+                )
 
-        source = sines + noise
-        source = F.tanh(source) * power_amp
+            if i > 0:
+                downs_rate = math.prod(self.upsample_rates[i + 1 :])
+                if downs_rate > 1:
+                    self.downsamples.append(DownSample1d(1, downs_rate))
+                else:
+                    self.downsamples.append(nn.Identity())
+                self.source_conv.append(
+                    weight_norm(
+                        nn.Conv1d(
+                            1,
+                            out_ch,
+                            kernel + 1,
+                            padding=(kernel + 1) // 2,
+                            bias=False,
+                        )
+                    )
+                )
+            self.snakes.append(
+                Activation1d(snake(in_ch, logscale=self.snake_log), in_ch)
+            )
 
-        return source
+        self.post_snake = Activation1d(snake(out_ch, logscale=self.snake_log), out_ch)
+        self.post_conv = weight_norm(nn.Conv1d(out_ch, 1, 7, padding=3, bias=False))
+
+        self.pre_conv.apply(init_weights)
+        self.upsamples.apply(init_weights)
+        self.convs.apply(init_weights)
+        self.source_conv.apply(init_weights)
+        self.post_conv.apply(init_weights)
+
+    def forward(self, x, source):
+        x = self.pre_conv(x)
+
+        for i in range(len(self.upsample_rates)):
+            x = self.snakes[i](x)
+            x = self.upsamples[i](x)
+
+            xn = None
+            for j in range(self.kernels):
+                x2 = self.convs[self.kernels * i + j](x)
+                if xn is None:
+                    xn = x2
+                else:
+                    xn += x2
+
+            x = x + xn / self.kernels
+
+            if i > 0:
+                source_x = self.downsamples[i - 1](source)
+                source_x = self.source_conv[i - 1](source_x)
+
+                x = x + source_x
+
+        x = self.post_snake(x)
+        x = self.post_conv(x)
+        x = F.hardtanh(x, -1, 1)
+
+        return x
 
 
-class SineGen(nn.Module):
+class PLNBlockOld(nn.Module):
     def __init__(self, config: DictConfig):
         super().__init__()
+        self.n_mels = config.n_mels
+        self.snake_log = config.model.snake_log
+        self.upsample_initial = config.model.upsample_initial
+        self.upsample_rates = config.model.upsample_rates
+        self.upsample_kernels = config.model.upsample_kernels
 
-        self.sample_rate = config.sample_rate
-        self.sine_amp = config.model.sine_amp
-        self.harmonic_num = config.model.harmonic_num
-        self.dim = self.harmonic_num + 1
+        assert len(self.upsample_rates) == len(self.upsample_kernels)
 
-    def _f02sine(self, f0):
-        """f0_values: (batchsize, length, dim)
-        where dim indicates fundamental tone and overtones
-        """
-        # convert to F0 in rad. The integer part n can be ignored
-        # because 2 * np.pi * n doesn't affect phase
-        rad_values = (f0 / self.sample_rate) % 1
+        self.pre_conv = weight_norm(
+            nn.Conv1d(self.n_mels, self.upsample_initial, 7, 1, padding=3)
+        )
 
-        # initial phase noise (no noise for fundamental component)
-        rand_ini = torch.rand(f0.shape[0], f0.shape[2], device=f0.device)
-        rand_ini[:, 0] = 0
-        rad_values[:, 0, :] = rad_values[:, 0, :] + rand_ini
+        self.upsamples = nn.ModuleList()
+        self.convs = nn.ModuleList()
+        self.downsamples = nn.ModuleList()
+        self.source_conv = nn.ModuleList()
+        self.snakes = nn.ModuleList()
 
-        # instantanouse phase sine[t] = sin(2*pi \sum_i=1 ^{t} rad)
+        snake = SnakeBeta
 
-        # To prevent torch.cumsum numerical overflow,
-        # it is necessary to add -1 whenever \sum_k=1^n rad_value_k > 1.
-        # Buffer tmp_over_one_idx indicates the time step to add -1.
-        # This will not change F0 of sine because (x-1) * 2*pi = x * 2*pi
-        tmp_over_one = torch.cumsum(rad_values, 1) % 1
-        tmp_over_one_idx = (tmp_over_one[:, 1:, :] - tmp_over_one[:, :-1, :]) < 0
-        cumsum_shift = torch.zeros_like(rad_values)
-        cumsum_shift[:, 1:, :] = tmp_over_one_idx * -1.0
+        for i in range(len(self.upsample_rates)):
+            in_ch = self.upsample_initial // (2**i)
+            out_ch = self.upsample_initial // (2 ** (i + 1))
+            kernel = self.upsample_kernels[i]
+            rate = self.upsample_rates[i]
 
-        sines = torch.sin(torch.cumsum(rad_values + cumsum_shift, dim=1) * 2 * np.pi)
-        return sines
+            self.upsamples.append(
+                weight_norm(
+                    nn.ConvTranspose1d(
+                        in_ch,
+                        out_ch,
+                        kernel,
+                        rate,
+                        padding=(kernel - rate) // 2,
+                    )
+                )
+            )
+            self.convs.append(
+                weight_norm(
+                    nn.Conv1d(
+                        out_ch,
+                        out_ch,
+                        kernel * 2 + 1,
+                        padding=(kernel * 2 + 1) // 2,
+                    )
+                )
+            )
+            self.downsamples.append(DownSample1d(1, math.prod(self.upsample_rates[i:])))
+            self.source_conv.append(
+                weight_norm(
+                    nn.Conv1d(
+                        1,
+                        in_ch,
+                        kernel * 2 + 1,
+                        padding=(kernel * 2 + 1) // 2,
+                    )
+                )
+            )
+            self.snakes.append(
+                Activation1d(snake(in_ch, logscale=self.snake_log), in_ch)
+            )
+            self.snakes.append(
+                Activation1d(snake(out_ch, logscale=self.snake_log), out_ch)
+            )
 
-    def forward(self, f0):
-        """sine_tensor, uv = forward(f0)
-        input F0: tensor(batchsize=1, length, dim=1)
-        output sine_tensor: tensor(batchsize=1, length, dim)
-        output uv: tensor(batchsize=1, length, 1)
-        """
-        with torch.no_grad():
-            f0_buf = torch.zeros(f0.shape[0], f0.shape[1], self.dim, device=f0.device)
-            # fundamental component
-            f0_buf[:, :, 0] = f0[:, :, 0]
-            for idx in np.arange(self.harmonic_num):
-                # idx + 2: the (idx+1)-th overtone, (idx+2)-th harmonic
-                f0_buf[:, :, idx + 1] = f0_buf[:, :, 0] * (idx + 2)
+        self.post_snake = Activation1d(snake(out_ch, logscale=self.snake_log), out_ch)
+        self.post_conv = weight_norm(nn.Conv1d(out_ch, 1, 15, padding=7))
 
-            # generate sine waveforms
-            sine_waves = self._f02sine(f0_buf) * self.sine_amp
+        self.pre_conv.apply(init_weights)
+        self.upsamples.apply(init_weights)
+        self.convs.apply(init_weights)
+        self.source_conv.apply(init_weights)
+        self.post_conv.apply(init_weights)
 
-        return sine_waves
+    def forward(self, x, source):
+        x = self.pre_conv(x)
+
+        for i in range(len(self.upsample_rates)):
+            source_x = self.downsamples[i](source)
+            source_x = self.source_conv[i](source_x)
+            x = x + source_x
+            x = self.snakes[2 * i](x)
+            x = self.upsamples[i](x)
+            x = self.snakes[2 * i + 1](x)
+            x = self.convs[i](x)
+
+        x = self.post_snake(x)
+        x = self.post_conv(x)
+        x = x + source
+        x = F.hardtanh(x, -1, 1)
+
+        return x

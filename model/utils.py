@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from librosa.filters import mel as librosa_mel_fn
 from torchaudio.transforms import MelSpectrogram
+from torch.nn.utils.parametrize import is_parametrized
 
 
 def plot_mel(data, titles=None):
@@ -88,12 +89,15 @@ def get_mel_transform(
 def plot_snakes(model: torch.nn.Module, logscale=False):
     alphas = []
     betas = []
+    gammas = []
     for layer in model.modules():
         classname = layer.__class__.__name__
-        if classname in ("Snake", "SnakeBeta"):
+        if classname in ("Snake", "SnakeBeta", "SnakeGamma"):
             alphas.append(layer.alpha.detach().cpu().numpy())
             if hasattr(layer, "beta"):
                 betas.append(layer.beta.detach().cpu().numpy())
+            if hasattr(layer, "gamma"):
+                gammas.append(layer.gamma.detach().cpu().numpy())
 
     if logscale:
         for i in range(len(alphas)):
@@ -101,10 +105,21 @@ def plot_snakes(model: torch.nn.Module, logscale=False):
         for i in range(len(betas)):
             betas[i] = np.exp(betas[i])
 
+    subplots = 1
+
+    if len(betas) > 0:
+        subplots += 1
+        for i in range(len(betas)):
+            betas[i] = 1 / (betas[i] + 1e-8)
+
+    if len(gammas) > 0:
+        subplots += 1
+
     plt.switch_backend("agg")
-    fig, ax = plt.subplots(2 if len(betas) > 0 else 1)
+    fig, ax = plt.subplots(subplots)
     plt.tight_layout()
     fig.set_figwidth(12)
+    fig.set_figheight(3 * subplots)
 
     ax[0].eventplot(alphas, orientation="vertical")
     ax[0].set_title("Alpha", fontsize="medium")
@@ -114,6 +129,43 @@ def plot_snakes(model: torch.nn.Module, logscale=False):
         ax[1].eventplot(betas, orientation="vertical")
         ax[1].set_title("Beta", fontsize="medium")
         ax[1].tick_params(labelsize="x-small")
+
+    if len(gammas) > 0:
+        ax[2].eventplot(gammas, orientation="vertical")
+        ax[2].set_title("Gamma", fontsize="medium")
+        ax[2].tick_params(labelsize="x-small")
+
+    return fig
+
+
+def plot_weights(model: torch.nn.Module):
+    weights = []
+    for layer in model.modules():
+        classname = layer.__class__.__name__
+        if classname in (
+            "Conv1d",
+            "ConvTranspose1d",
+            "ParametrizedConv1d",
+            "ParametrizedConvTranspose1d",
+        ):
+            if hasattr(layer, "weight"):
+                if (
+                    not is_parametrized(layer, "weight")
+                    and not layer.weight.requires_grad
+                ):
+                    continue
+                weight = torch.flatten(layer.weight)
+
+                weights.append(weight.detach().cpu().numpy())
+
+    plt.switch_backend("agg")
+    fig, ax = plt.subplots()
+    plt.tight_layout()
+    fig.set_figwidth(12)
+
+    ax.eventplot(weights, orientation="vertical")
+    ax.set_title("Weights", fontsize="medium")
+    ax.tick_params(labelsize="x-small")
 
     return fig
 
