@@ -8,28 +8,28 @@ from torch.nn.utils.parametrizations import weight_norm
 from torch.nn.utils.parametrize import is_parametrized, remove_parametrizations
 
 from alias.act import Activation1d
-from alias.resample import DownSample1d, UpSample1d
-from model.common import SnakeBeta, SnakeGamma, SnakeBlock
+from alias.resample import DownSample1d
+from model.common import SnakeGamma, SnakeBlock
 from model.ddsp.generator import DDSP
 
 from ..utils import init_weights
-from .source import NoiseCombSource
+from .source import DDSP
 
 
 class HiFiPLN(nn.Module):
     def __init__(self, config: DictConfig):
         super().__init__()
 
+        self.pre_encoder = PreEncoder(config)
         self.source = DDSP(config)
 
-        self.load_ddsp(config.model_ddsp.checkpoint)
-
-        self.harmonic_block = PLNBlock(config)
-        self.noise_block = PLNBlock(config)
+        self.harmonic_block = HarmonicBlock(config)
+        self.noise_block = NoiseBlock(config)
 
     def forward(self, x, f0):
         _, (harmonic, noise) = self.source(x, f0)
 
+        x = self.pre_encoder(x)
         harmonic = self.harmonic_block(x, harmonic)
         noise = self.noise_block(x, noise)
 
@@ -37,19 +37,6 @@ class HiFiPLN(nn.Module):
         waveform = F.hardtanh(waveform, -1, 1)
 
         return waveform, (harmonic, noise)
-
-    def load_ddsp(self, ckpt_path):
-        cp_dict = torch.load(ckpt_path, map_location="cpu")
-        self.source.load_state_dict(
-            {
-                k.replace("generator.", ""): v
-                for k, v in cp_dict["state_dict"].items()
-                if k.startswith("generator.")
-            }
-        )
-        self.source.remove_parametrizations()
-        self.source.eval()
-        self.source.requires_grad_(False)
 
     def remove_parametrizations(self):
         param = 0
@@ -64,7 +51,54 @@ class HiFiPLN(nn.Module):
         self.noise_block.prune()
 
 
-class PLNBlock(nn.Module):
+class PreEncoder(nn.Module):
+    def __init__(self, config: DictConfig) -> None:
+        super().__init__()
+
+        self.n_mels = config.n_mels
+        self.upsample_initial = config.model.upsample_initial
+        self.snake_log = config.model.snake_log
+
+        steps = self.upsample_initial // self.n_mels + 1
+
+        self.convs = nn.ModuleList()
+        self.glus = nn.ModuleList()
+
+        for i in range(steps):
+            in_ch = self.n_mels * (2**i)
+            out_ch = self.n_mels * (2 ** (i + 1)) * 2
+            self.convs.append(
+                nn.Conv1d(
+                    in_ch,
+                    out_ch,
+                    3,
+                    padding=1,
+                )
+            )
+            self.glus.append(nn.GLU(1))
+
+        self.post_norm = nn.LayerNorm(self.n_mels * (2**steps))
+
+        self.post = nn.Linear(
+            self.n_mels * (2**steps), self.upsample_initial, bias=False
+        )
+
+        self.convs.apply(init_weights)
+
+    def forward(self, x):
+        for conv, glu in zip(self.convs, self.glus):
+            x = conv(x)
+            x = glu(x)
+
+        x = x.transpose(1, 2)
+        x = self.post_norm(x)
+        x = self.post(x)
+        x = x.transpose(1, 2)
+
+        return x
+
+
+class HarmonicBlock(nn.Module):
     def __init__(self, config: DictConfig):
         super().__init__()
         self.n_mels = config.n_mels
@@ -79,7 +113,7 @@ class PLNBlock(nn.Module):
         assert len(self.upsample_rates) == len(self.upsample_kernels)
 
         self.pre_conv = weight_norm(
-            nn.Conv1d(self.n_mels, self.upsample_initial, 7, padding=3)
+            nn.Conv1d(self.upsample_initial, self.upsample_initial, 7, padding=3)
         )
 
         self.upsamples = nn.ModuleList()
@@ -117,23 +151,22 @@ class PLNBlock(nn.Module):
                     )
                 )
 
-            if i > 0:
-                downs_rate = math.prod(self.upsample_rates[i + 1 :])
-                if downs_rate > 1:
-                    self.downsamples.append(DownSample1d(1, downs_rate))
-                else:
-                    self.downsamples.append(nn.Identity())
-                self.source_conv.append(
-                    weight_norm(
-                        nn.Conv1d(
-                            1,
-                            out_ch,
-                            kernel + 1,
-                            padding=(kernel + 1) // 2,
-                            bias=False,
-                        )
+            downs_rate = math.prod(self.upsample_rates[i + 1 :])
+            if downs_rate > 1:
+                self.downsamples.append(DownSample1d(1, downs_rate))
+            else:
+                self.downsamples.append(nn.Identity())
+            self.source_conv.append(
+                weight_norm(
+                    nn.Conv1d(
+                        1,
+                        out_ch,
+                        kernel + 1,
+                        padding=(kernel + 1) // 2,
+                        bias=False,
                     )
                 )
+            )
             self.snakes.append(
                 Activation1d(snake(in_ch, logscale=self.snake_log), in_ch)
             )
@@ -154,6 +187,11 @@ class PLNBlock(nn.Module):
             x = self.snakes[i](x)
             x = self.upsamples[i](x)
 
+            source_x = self.downsamples[i](source)
+            source_x = self.source_conv[i](source_x)
+
+            x = x + source_x
+
             xn = None
             for j in range(self.kernels):
                 x2 = self.convs[self.kernels * i + j](x)
@@ -164,14 +202,93 @@ class PLNBlock(nn.Module):
 
             x = x + xn / self.kernels
 
-            if i > 0:
-                source_x = self.downsamples[i - 1](source)
-                source_x = self.source_conv[i - 1](source_x)
-
-                x = x + source_x
-
         x = self.post_snake(x)
         x = self.post_conv(x)
-        x = F.hardtanh(x, -1, 1)
+        x = F.tanh(x)
+
+        return x
+
+
+class NoiseBlock(nn.Module):
+    def __init__(self, config: DictConfig) -> None:
+        super().__init__()
+
+        self.n_mels = config.n_mels
+        self.snake_log = config.model.snake_log
+        self.upsample_initial = config.model.upsample_initial
+        self.upsample_rates = config.model.upsample_rates
+        self.upsample_kernels = config.model.upsample_kernels
+        self.res_kernel = config.model.kernel_sizes[-1]
+        self.res_dilation = config.model.dilation_sizes[-1]
+
+        snake = SnakeGamma
+
+        self.pre_conv = weight_norm(
+            nn.Conv1d(self.upsample_initial, self.upsample_initial, 7, padding=3)
+        )
+
+        self.upsamples = nn.ModuleList()
+        self.downsamples = nn.ModuleList()
+        self.snakes = nn.ModuleList()
+
+        for i in range(len(self.upsample_rates)):
+            in_ch = self.upsample_initial // (2**i)
+            out_ch = self.upsample_initial // (2 ** (i + 1))
+            rate = self.upsample_rates[i]
+            kernel = self.upsample_kernels[i]
+
+            self.snakes.append(
+                Activation1d(snake(in_ch, logscale=self.snake_log), in_ch)
+            )
+
+            self.upsamples.append(
+                weight_norm(
+                    nn.ConvTranspose1d(
+                        in_ch,
+                        out_ch,
+                        kernel,
+                        rate,
+                        padding=(kernel - rate) // 2,
+                    )
+                )
+            )
+
+            downs_rate = math.prod(self.upsample_rates[i + 1 :])
+            if downs_rate > 1:
+                self.downsamples.append(
+                    nn.Conv1d(
+                        1,
+                        out_ch,
+                        kernel_size=downs_rate * 2,
+                        stride=downs_rate,
+                        padding=downs_rate // 2,
+                    )
+                )
+            else:
+                self.downsamples.append(nn.Conv1d(1, out_ch, 7, padding=3))
+
+        self.conv = SnakeBlock(
+            out_ch,
+            kernel_size=self.res_kernel,
+            dilation=self.res_dilation,
+            snake_log=self.snake_log,
+        )
+
+        self.post_conv = weight_norm(nn.Conv1d(out_ch, 1, 7, padding=3, bias=False))
+
+    def forward(self, x, source):
+        x = self.pre_conv(x)
+
+        for i in range(len(self.upsample_rates)):
+            x = self.snakes[i](x)
+            x = self.upsamples[i](x)
+
+            source_x = self.downsamples[i](source)
+            x = x + source_x
+
+        x = self.conv(x)
+
+        x = self.post_conv(x)
+        x = F.tanh(x)
 
         return x

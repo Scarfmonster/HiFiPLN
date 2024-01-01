@@ -1,18 +1,21 @@
+import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 import argparse
 
 import lightning as pl
 import torch
-from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.callbacks import (
+    LearningRateMonitor,
+    ModelCheckpoint,
+)
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import SingleDeviceStrategy
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
 from data import VocoderDataset, collate_fn
-from model.hifigan.trainer import HiFiGanTrainer
-from model.hifipln.trainer import HiFiPlnTrainer
-from model.power.trainer import PowerTrainer
-from model.vuv.trainer import VUVTrainer
 
 torch.set_float32_matmul_precision("medium")
 torch.backends.cudnn.allow_tf32 = True
@@ -23,7 +26,6 @@ if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
     argparser.add_argument("--config", type=str, required=True)
     argparser.add_argument("--resume", type=str, default=None)
-    argparser.add_argument("--export", type=str, required=False)
 
     args = argparser.parse_args()
 
@@ -43,7 +45,6 @@ if __name__ == "__main__":
             onesided: bool | None = None,
             return_complex: bool | None = True,
         ) -> torch.Tensor:
-            dtype = input.dtype
             input = input.float()
             if window is not None:
                 window = window.float()
@@ -62,6 +63,15 @@ if __name__ == "__main__":
 
         torch.stft = stft
 
+    device = torch.device("cuda:0")
+    try:
+        import torch_directml  # type: ignore
+
+        device = torch_directml.device()
+        print("Using DirectML: ", device)
+    except ImportError as e:
+        pass
+
     trainer = pl.Trainer(
         accelerator="gpu",
         devices=-1,
@@ -79,21 +89,33 @@ if __name__ == "__main__":
             ),
             LearningRateMonitor(logging_interval="step"),
         ],
-        strategy=SingleDeviceStrategy(device=torch.device("cuda:0")),
+        strategy=SingleDeviceStrategy(device=device),
         # detect_anomaly=True,
         logger=TensorBoardLogger("logs", name=config.type),
-        benchmark=True,
+        # benchmark=True,
         deterministic=False,
     )
 
     match config.type:
         case "HiFiGan":
+            from model.hifigan.trainer import HiFiGanTrainer
+
             model = HiFiGanTrainer(config)
         case "HiFiPLN":
+            from model.hifipln.trainer import HiFiPlnTrainer
+
             model = HiFiPlnTrainer(config)
+        case "DDSP":
+            from model.ddsp.trainer import DDSPTrainer
+
+            model = DDSPTrainer(config)
         case "VUV":
+            from model.vuv.trainer import VUVTrainer
+
             model = VUVTrainer(config)
         case "Power":
+            from model.power.trainer import PowerTrainer
+
             model = PowerTrainer(config)
 
     train_dataset = VocoderDataset(config, "train")

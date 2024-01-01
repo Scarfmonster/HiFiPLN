@@ -8,7 +8,7 @@ n_mels: 128
 hop_length: 512
 win_length: 2048
 n_fft: 2048
-lr: 0.0001
+lr: 0.0002
 lr_decay: 0.995
 adam_b1: 0.8
 adam_b2: 0.99
@@ -26,7 +26,7 @@ dataset:
     return_vuv: True
 dataloader:
   train:
-    batch_size: 8
+    batch_size: 12
     shuffle: True
     num_workers: 8
     pin_memory: True
@@ -41,17 +41,15 @@ dataloader:
     persistent_workers: True
 model:
   snake_log: True
-  input_noise: 0.00
+  input_noise: 0.0
   upsample_rates: [8, 8, 4, 2]
   upsample_kernels: [16, 16, 8, 4]
-  upsample_initial: 512
+  upsample_initial: 256
   kernel_sizes : [3, 7, 11]
   dilation_sizes:
-    - [1, 3, 5]
-    - [1, 5, 7]
-    - [1, 5, 11]
-model_ddsp:
-  checkpoint: "ckpt/DDSP.ckpt"
+    - [1, 3]
+    - [1, 7]
+    - [1, 11]
 mpd:
   periods:  [2, 3, 5, 7, 11]
   kernel_size: 5

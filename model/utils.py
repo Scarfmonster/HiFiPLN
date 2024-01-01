@@ -121,6 +121,9 @@ def plot_snakes(model: torch.nn.Module, logscale=False):
     fig.set_figwidth(12)
     fig.set_figheight(3 * subplots)
 
+    if subplots == 1:
+        ax = [ax]
+
     ax[0].eventplot(alphas, orientation="vertical")
     ax[0].set_title("Alpha", fontsize="medium")
     ax[0].tick_params(labelsize="x-small")
