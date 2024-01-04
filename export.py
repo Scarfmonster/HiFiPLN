@@ -1,4 +1,6 @@
 import argparse
+import os
+import re
 import shutil
 from pathlib import Path
 
@@ -99,6 +101,37 @@ def main(input_file, output_path, config):
         shutil.rmtree(output_path)
 
     output_path.mkdir(parents=True, exist_ok=True)
+
+    if input_file is not None and os.path.isdir(input_file):
+        dirs = [
+            f
+            for f in os.listdir(input_file)
+            if os.path.isdir(os.path.join(input_file, f)) and f.startswith("version_")
+        ]
+
+        if len(dirs) > 0:
+            last_version = 0
+            for d in dirs:
+                version = int(d.split("_")[1])
+                if version > last_version:
+                    last_version = version
+            input_file = os.path.join(
+                input_file, f"version_{last_version}", "checkpoints"
+            )
+        else:
+            input_file = os.path.join(input_file, "checkpoints")
+
+        files = [f for f in os.listdir(input_file) if f.endswith(".ckpt")]
+        if len(files) > 0:
+            last_epoch = 0
+            last_filename = ""
+            for f in files:
+                step = int(re.search(r"(?:step=)(\d+)", f).group(1))
+                if step > last_epoch:
+                    last_epoch = step
+                    last_filename = f
+            input_file = os.path.join(input_file, last_filename)
+
     print(f"Exporting {input_file} to {output_path}")
 
     # Export ONNX

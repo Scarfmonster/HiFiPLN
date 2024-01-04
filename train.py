@@ -1,15 +1,10 @@
-import os
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
 import argparse
+import os
+import re
 
 import lightning as pl
 import torch
-from lightning.pytorch.callbacks import (
-    LearningRateMonitor,
-    ModelCheckpoint,
-)
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import SingleDeviceStrategy
 from omegaconf import OmegaConf
@@ -19,6 +14,7 @@ from data import VocoderDataset, collate_fn
 
 torch.set_float32_matmul_precision("medium")
 torch.backends.cudnn.allow_tf32 = True
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 if __name__ == "__main__":
     pl.seed_everything(0, workers=True)
@@ -28,6 +24,35 @@ if __name__ == "__main__":
     argparser.add_argument("--resume", type=str, default=None)
 
     args = argparser.parse_args()
+
+    resume = args.resume
+    if resume is not None and os.path.isdir(resume):
+        dirs = [
+            f
+            for f in os.listdir(resume)
+            if os.path.isdir(os.path.join(resume, f)) and f.startswith("version_")
+        ]
+
+        if len(dirs) > 0:
+            last_version = 0
+            for d in dirs:
+                version = int(d.split("_")[1])
+                if version > last_version:
+                    last_version = version
+            resume = os.path.join(resume, f"version_{last_version}", "checkpoints")
+        else:
+            resume = os.path.join(resume, "checkpoints")
+
+        files = [f for f in os.listdir(resume) if f.endswith(".ckpt")]
+        if len(files) > 0:
+            last_epoch = 0
+            last_filename = ""
+            for f in files:
+                step = int(re.search(r"(?:step=)(\d+)", f).group(1))
+                if step > last_epoch:
+                    last_epoch = step
+                    last_filename = f
+            resume = os.path.join(resume, last_filename)
 
     config = OmegaConf.load(args.config)
 
@@ -142,4 +167,4 @@ if __name__ == "__main__":
         collate_fn=collate_fn,
     )
 
-    trainer.fit(model, train_dataloader, valid_dataloader, ckpt_path=args.resume)
+    trainer.fit(model, train_dataloader, valid_dataloader, ckpt_path=resume)
