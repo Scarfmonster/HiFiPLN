@@ -106,7 +106,9 @@ class SnakeBlock(nn.Module):
 
         self.snakes = nn.ModuleList()
         for _ in range(len(dilation) * 2):
-            self.snakes.append(SnakeGamma(channels, logscale=snake_log))
+            self.snakes.append(
+                Activation1d(SnakeGamma(channels, logscale=snake_log), channels)
+            )
 
     def forward(self, x):
         xn = None
