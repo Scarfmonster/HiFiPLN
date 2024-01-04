@@ -119,7 +119,7 @@ def plot_snakes(model: torch.nn.Module, logscale=False):
     fig, ax = plt.subplots(subplots)
     plt.tight_layout()
     fig.set_figwidth(12)
-    fig.set_figheight(3 * subplots)
+    fig.set_figheight(2.5 * subplots)
 
     if subplots == 1:
         ax = [ax]
