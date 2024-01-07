@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from omegaconf import DictConfig
-from torch.nn.utils.parametrize import is_parametrized, remove_parametrizations
+from torch.nn.utils.parametrizations import weight_norm
 
+from ..utils import init_weights
 from .stft import STFT
 
 
@@ -20,6 +21,7 @@ class DDSP(nn.Module):
 
         self.sample_rate = config.sample_rate
         self.n_mels = config.n_mels
+        self.upsample_initial = config.model.upsample_initial
         self.n_fft = config.n_fft
         self.hop_length = config.hop_length
         self.win_length = config.win_length
@@ -36,9 +38,9 @@ class DDSP(nn.Module):
             "noise_magnitude": self.win_length // 2 + 1,
         }
 
-        self.mel2ctrl = Encoder(self.n_mels, split_map)
+        self.mel2ctrl = Encoder(self.upsample_initial, split_map)
 
-    def forward(self, mel_frames, f0_frames, max_upsample_dim=32):
+    def forward(self, mel_frames, f0_frames):
         """
         Forward pass of the DDSP module.
 
@@ -51,8 +53,6 @@ class DDSP(nn.Module):
             torch.Tensor: The generated signal.
             Tuple[torch.Tensor, torch.Tensor]: Tuple containing the harmonic and noise components.
         """
-        if f0_frames.ndim == 2:
-            f0_frames = f0_frames[:, None]
         f0 = F.interpolate(
             f0_frames,
             scale_factor=self.hop_length,
@@ -141,26 +141,28 @@ class Encoder(nn.Module):
         self.output_splits = output_splits
 
         self.input = nn.Sequential(
-            nn.Conv1d(inputs, 256, 3, padding=1),
+            weight_norm(nn.Conv1d(inputs, 256, 3, padding=1)),
             nn.GroupNorm(4, 256),
-            nn.LeakyReLU(),
-            nn.Conv1d(256, 256, 3, padding=1),
+            nn.GELU(),
+            weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
         )
 
         self.phase = nn.Linear(1, 256)
 
         self.encoder = nn.Sequential(
-            nn.Conv1d(256, 512, 3, padding=1),
+            weight_norm(nn.Conv1d(256, 512, 3, padding=1)),
             nn.GLU(1),
-            nn.Conv1d(256, 512, 3, padding=1),
+            weight_norm(nn.Conv1d(256, 512, 3, padding=1)),
             nn.GLU(1),
-            nn.Conv1d(256, 256, 3, padding=1),
+            weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
         )
 
         self.norm = nn.LayerNorm(256)
 
         self.n_out = sum([v for k, v in output_splits.items()])
         self.output = nn.Linear(256, self.n_out)
+
+        self.apply(init_weights)
 
     def forward(self, x, phase):
         x = self.input(x).transpose(1, 2)
