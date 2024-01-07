@@ -60,6 +60,7 @@ class ExportableHiFiPLN(torch.nn.Module):
 
     def forward(self, mel: torch.FloatTensor, f0: torch.FloatTensor):
         mel = mel.transpose(-1, -2)
+        f0 = f0.unsqueeze(1)
         wav, (harmonic, noise) = self.model(mel, f0)
 
         return wav
