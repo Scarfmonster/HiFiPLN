@@ -96,6 +96,24 @@ class HiFiPlnTrainer(pl.LightningModule):
         mels = self.spectogram_extractor.get_mel(x.squeeze(1))
         return mels
 
+    def stft_loss(self, x, y):
+        loss_stft = 0
+        for n_fft, hop_length, win_length in self.stft_config:
+            x_stft = torch.stft(
+                x.squeeze(1), n_fft, hop_length, win_length, return_complex=True
+            )
+            y_stft = torch.stft(
+                y.squeeze(1), n_fft, hop_length, win_length, return_complex=True
+            )
+            y_stft = torch.view_as_real(y_stft)
+            x_stft = torch.view_as_real(x_stft)
+
+            loss_stft += F.l1_loss(y_stft, x_stft)
+
+        loss_stft /= len(self.stft_config)
+
+        return loss_stft
+
     def training_step(self, batch, batch_idx):
         optim_g, optim_d = self.optimizers()
 
@@ -108,6 +126,7 @@ class HiFiPlnTrainer(pl.LightningModule):
         mels = self.get_mels(audio)[:, :, : mel_lens.max()]
         gen_mels = mels + torch.rand_like(mels) * self.config.model.input_noise
         gen_audio, (_, _) = self.generator(gen_mels, pitches)
+        gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
 
         # Generator
         optim_g.zero_grad(set_to_none=True)
@@ -128,9 +147,7 @@ class HiFiPlnTrainer(pl.LightningModule):
                 f_loss += F.l1_loss(fake, real.detach())
             feat_loss_mpd += f_loss
 
-            gen_loss_mpd += F.binary_cross_entropy_with_logits(
-                score_fake, torch.ones_like(score_fake)
-            )
+            gen_loss_mpd += F.mse_loss(score_fake, torch.ones_like(score_fake))
 
         for (feat_fake, score_fake), (feat_real, _) in zip(gen_mrd, real_mrd):
             f_loss = 0.0
@@ -138,14 +155,15 @@ class HiFiPlnTrainer(pl.LightningModule):
                 f_loss += F.l1_loss(fake, real.detach())
             feat_loss_mrd += f_loss
 
-            gen_loss_mrd += F.binary_cross_entropy_with_logits(
-                score_fake, torch.ones_like(score_fake)
-            )
+            gen_loss_mrd += F.mse_loss(score_fake, torch.ones_like(score_fake))
 
         gen_loss = gen_loss_mpd + gen_loss_mrd
         feat_loss = feat_loss_mpd + feat_loss_mrd
 
-        loss_gen_all = gen_loss + feat_loss
+        loss_stft = self.stft_loss(audio, gen_audio)
+        loss_mel = F.l1_loss(mels, gen_audio_mel)
+
+        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_mel
 
         self.manual_backward(loss_gen_all)
         optim_g.step()
@@ -211,6 +229,26 @@ class HiFiPlnTrainer(pl.LightningModule):
         )
 
         self.log(
+            "train/loss_stft",
+            loss_stft,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            "train/loss_mel",
+            loss_mel,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
             "train/loss_all",
             loss_gen_all,
             on_step=True,
@@ -232,12 +270,8 @@ class HiFiPlnTrainer(pl.LightningModule):
         for (_, score_fake), (_, score_real) in zip(
             disc_mrd_fake + disc_mpd_fake, disc_mrd_real + disc_mpd_real
         ):
-            loss_d += F.binary_cross_entropy_with_logits(
-                score_real, torch.ones_like(score_real)
-            )
-            loss_d += F.binary_cross_entropy_with_logits(
-                score_fake, torch.zeros_like(score_fake)
-            )
+            loss_d += F.mse_loss(score_real, torch.ones_like(score_real))
+            loss_d += F.mse_loss(score_fake, torch.zeros_like(score_fake))
 
         self.manual_backward(loss_d)
         optim_d.step()
@@ -411,3 +445,15 @@ class HiFiPlnTrainer(pl.LightningModule):
                 )
 
                 plt.close(image_mels)
+
+    def on_train_start(self) -> None:
+        torch.backends.cudnn.benchmark = True
+
+    def on_train_end(self) -> None:
+        torch.backends.cudnn.benchmark = False
+
+    def on_validation_start(self) -> None:
+        torch.backends.cudnn.benchmark = False
+
+    def on_validation_end(self) -> None:
+        torch.backends.cudnn.benchmark = True
