@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.parametrizations import weight_norm
-from alias.act import Activation1d
 
+from alias.resample import DownSample1d, UpSample1d
 from model.utils import get_padding, init_weights
 
 
@@ -53,9 +53,9 @@ class ResBlock(nn.Module):
 
     def forward(self, x):
         for c1, c2 in zip(self.convs1, self.convs2):
-            x2 = F.leaky_relu(x, self.lrelu_slope, inplace=False)
+            x2 = F.gelu(x)
             x2 = c1(x2)
-            x2 = F.leaky_relu(x2, self.lrelu_slope, inplace=True)
+            x2 = F.gelu(x2)
             x2 = c2(x2)
             x = x + x2
         return x
@@ -68,6 +68,7 @@ class SnakeBlock(nn.Module):
         kernel_size: int = 3,
         dilation: tuple[int] = (1, 3, 5),
         snake_log: bool = False,
+        antialias: bool = False,
     ):
         super().__init__()
 
@@ -106,22 +107,21 @@ class SnakeBlock(nn.Module):
 
         self.snakes = nn.ModuleList()
         for _ in range(len(dilation) * 2):
-            self.snakes.append(
-                Activation1d(SnakeGamma(channels, logscale=snake_log), channels)
-            )
+            self.snakes.append(SnakeGamma(channels, logscale=snake_log))
+
+        self.upsample = UpSample1d(channels, 2)
+        self.downsample = DownSample1d(channels, 2)
 
     def forward(self, x):
-        xn = None
         for i in range(self.dilations):
-            x2 = self.snakes[2 * i](x)
-            x2 = self.convs1[i](x2)
-            x2 = self.snakes[2 * i + 1](x2)
-            x2 = self.convs2[i](x2)
-            if xn is None:
-                xn = x2
-            else:
-                xn += x2
-        x = x + xn / self.dilations
+            xn = self.upsample(x)
+            xn = self.snakes[2 * i](xn)
+            xn = self.downsample(xn)
+            xn = self.convs1[i](xn)
+            xn = self.snakes[2 * i + 1](xn)
+            xn = self.convs2[i](xn)
+
+            x = x + xn
         return x
 
 
