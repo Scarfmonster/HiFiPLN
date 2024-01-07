@@ -83,7 +83,7 @@ class DiscriminatorP(nn.Module):
 
         for l in self.convs:
             x = l(x)
-            x = F.leaky_relu(x, self.lrelu_slope, inplace=True)
+            x = F.gelu(x)
             x = torch.nan_to_num(x)
 
             fmap.append(x)
@@ -140,7 +140,7 @@ class DiscriminatorR(nn.Module):
         x = x.unsqueeze(1)
         for l in self.convs:
             x = l(x)
-            x = F.leaky_relu(x, self.lrelu_slope)
+            x = F.gelu(x)
             fmap.append(x)
         x = self.conv_post(x)
         fmap.append(x)
