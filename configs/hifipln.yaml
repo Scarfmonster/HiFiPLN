@@ -42,21 +42,21 @@ dataloader:
 model:
   snake_log: True
   input_noise: 0.0
-  upsample_rates: [8, 8, 4, 2]
-  upsample_kernels: [16, 16, 8, 4]
-  upsample_initial: 256
+  upsample_rates: [8, 8, 2, 2, 2]
+  upsample_kernels: [16, 16, 4, 4, 4]
+  upsample_initial: 512
   kernel_sizes : [3, 7, 11]
   dilation_sizes:
-    - [1, 3]
-    - [1, 7]
-    - [1, 11]
+    - [1, 3, 5]
+    - [1, 3, 5]
+    - [1, 3, 5]
 mpd:
-  periods:  [2, 3, 5, 7, 11]
+  periods:  [2, 3, 5, 7, 11, 17, 23, 37]
   kernel_size: 5
   stride: 3
   lrelu_slope: 0.1
 mrd:
-  resolutions: [[1024, 120, 600], [2048, 240, 1200], [512, 50, 240]] # (filter_length, hop_length, win_length)
+  resolutions: [[2048, 240, 1200], [1024, 120, 600], [512, 50, 240]] # (filter_length, hop_length, win_length)
   lrelu_slope: 0.1
 preprocessing:
   f0_min: 40
