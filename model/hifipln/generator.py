@@ -9,7 +9,7 @@ from torch.nn.utils.parametrize import is_parametrized, remove_parametrizations
 
 from alias.act import Activation1d
 from alias.resample import DownSample1d
-from model.common import SnakeGamma, SnakeBlock
+from model.common import ResBlock, SnakeBlock, SnakeGamma
 from model.ddsp.generator import DDSP
 
 from ..utils import init_weights
@@ -27,9 +27,8 @@ class HiFiPLN(nn.Module):
         self.noise_block = NoiseBlock(config)
 
     def forward(self, x, f0):
+        x = self.pre_encoder(x, f0)
         _, (harmonic, noise) = self.source(x, f0)
-
-        x = self.pre_encoder(x)
         harmonic = self.harmonic_block(x, harmonic)
         noise = self.noise_block(x, noise)
 
@@ -57,41 +56,33 @@ class PreEncoder(nn.Module):
 
         self.n_mels = config.n_mels
         self.upsample_initial = config.model.upsample_initial
-        self.snake_log = config.model.snake_log
 
-        steps = self.upsample_initial // self.n_mels + 1
-
-        self.convs = nn.ModuleList()
-        self.glus = nn.ModuleList()
-
-        for i in range(steps):
-            in_ch = self.n_mels * (2**i)
-            out_ch = self.n_mels * (2 ** (i + 1)) * 2
-            self.convs.append(
-                nn.Conv1d(
-                    in_ch,
-                    out_ch,
-                    3,
-                    padding=1,
-                )
-            )
-            self.glus.append(nn.GLU(1))
-
-        self.post_norm = nn.LayerNorm(self.n_mels * (2**steps))
-
-        self.post = nn.Linear(
-            self.n_mels * (2**steps), self.upsample_initial, bias=False
+        self.convs1 = nn.Sequential(
+            weight_norm(nn.Conv1d(self.n_mels + 1, 256, 3, padding=1)),
+            nn.GroupNorm(4, 256),
+            nn.GELU(),
         )
 
-        self.convs.apply(init_weights)
+        self.convs2 = nn.Sequential(
+            weight_norm(nn.Conv1d(256 + 1, 512, 3, padding=1)),
+            nn.GLU(1),
+            weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
+        )
 
-    def forward(self, x):
-        for conv, glu in zip(self.convs, self.glus):
-            x = conv(x)
-            x = glu(x)
+        self.norm = nn.LayerNorm(256)
+        self.post = weight_norm(nn.Linear(256, self.upsample_initial))
+
+        self.convs1.apply(init_weights)
+        self.convs2.apply(init_weights)
+
+    def forward(self, x, f0):
+        x = torch.cat([x, f0], dim=1)
+        x = self.convs1(x)
+        x = torch.cat([x, f0], dim=1)
+        x = self.convs2(x)
 
         x = x.transpose(1, 2)
-        x = self.post_norm(x)
+        x = self.norm(x)
         x = self.post(x)
         x = x.transpose(1, 2)
 
@@ -163,20 +154,16 @@ class HarmonicBlock(nn.Module):
                         out_ch,
                         kernel + 1,
                         padding=(kernel + 1) // 2,
-                        bias=False,
                     )
                 )
             )
-            self.snakes.append(
-                Activation1d(snake(in_ch, logscale=self.snake_log), in_ch)
-            )
+            self.snakes.append(snake(in_ch, logscale=self.snake_log))
 
         self.post_snake = Activation1d(snake(out_ch, logscale=self.snake_log), out_ch)
-        self.post_conv = weight_norm(nn.Conv1d(out_ch, 1, 7, padding=3, bias=False))
+        self.post_conv = weight_norm(nn.Conv1d(out_ch, 1, 7, padding=3))
 
         self.pre_conv.apply(init_weights)
         self.upsamples.apply(init_weights)
-        self.convs.apply(init_weights)
         self.source_conv.apply(init_weights)
         self.post_conv.apply(init_weights)
 
@@ -189,8 +176,7 @@ class HarmonicBlock(nn.Module):
 
             source_x = self.downsamples[i](source)
             source_x = self.source_conv[i](source_x)
-
-            x = x + source_x
+            # x = x + source_x
 
             xn = None
             for j in range(self.kernels):
@@ -200,7 +186,9 @@ class HarmonicBlock(nn.Module):
                 else:
                     xn += x2
 
-            x = x + xn / self.kernels
+                xn = xn + source_x
+
+            x = xn / self.kernels
 
         x = self.post_snake(x)
         x = self.post_conv(x)
@@ -214,32 +202,25 @@ class NoiseBlock(nn.Module):
         super().__init__()
 
         self.n_mels = config.n_mels
-        self.snake_log = config.model.snake_log
         self.upsample_initial = config.model.upsample_initial
         self.upsample_rates = config.model.upsample_rates
         self.upsample_kernels = config.model.upsample_kernels
-        self.res_kernel = config.model.kernel_sizes[-1]
-        self.res_dilation = config.model.dilation_sizes[-1]
-
-        snake = SnakeGamma
+        self.kernel_sizes = config.model.kernel_sizes
+        self.dilation_sizes = config.model.dilation_sizes
+        self.kernels = len(self.kernel_sizes)
 
         self.pre_conv = weight_norm(
             nn.Conv1d(self.upsample_initial, self.upsample_initial, 7, padding=3)
         )
 
         self.upsamples = nn.ModuleList()
-        self.downsamples = nn.ModuleList()
-        self.snakes = nn.ModuleList()
+        self.source_conv = nn.ModuleList()
 
         for i in range(len(self.upsample_rates)):
             in_ch = self.upsample_initial // (2**i)
             out_ch = self.upsample_initial // (2 ** (i + 1))
             rate = self.upsample_rates[i]
             kernel = self.upsample_kernels[i]
-
-            self.snakes.append(
-                Activation1d(snake(in_ch, logscale=self.snake_log), in_ch)
-            )
 
             self.upsamples.append(
                 weight_norm(
@@ -253,41 +234,53 @@ class NoiseBlock(nn.Module):
                 )
             )
 
-            downs_rate = math.prod(self.upsample_rates[i + 1 :])
-            if downs_rate > 1:
-                self.downsamples.append(
-                    nn.Conv1d(
-                        1,
-                        out_ch,
-                        kernel_size=downs_rate * 2,
-                        stride=downs_rate,
-                        padding=downs_rate // 2,
-                    )
-                )
-            else:
-                self.downsamples.append(nn.Conv1d(1, out_ch, 7, padding=3))
-
-        self.conv = SnakeBlock(
-            out_ch,
-            kernel_size=self.res_kernel,
-            dilation=self.res_dilation,
-            snake_log=self.snake_log,
+        self.source_conv = weight_norm(
+            nn.Conv1d(
+                1,
+                out_ch,
+                17,
+                padding=8,
+            )
         )
 
-        self.post_conv = weight_norm(nn.Conv1d(out_ch, 1, 7, padding=3, bias=False))
+        self.convs = nn.ModuleList()
+
+        for k, d in zip(self.kernel_sizes, self.dilation_sizes):
+            self.convs.append(
+                ResBlock(
+                    out_ch,
+                    kernel_size=k,
+                    dilation=d,
+                )
+            )
+
+        self.post_snake = Activation1d(SnakeGamma(out_ch), out_ch)
+        self.post_conv = weight_norm(nn.Conv1d(out_ch, 1, 7, padding=3))
+
+        self.pre_conv.apply(init_weights)
+        self.upsamples.apply(init_weights)
+        self.post_conv.apply(init_weights)
 
     def forward(self, x, source):
         x = self.pre_conv(x)
 
         for i in range(len(self.upsample_rates)):
-            x = self.snakes[i](x)
+            x = F.gelu(x)
             x = self.upsamples[i](x)
 
-            source_x = self.downsamples[i](source)
-            x = x + source_x
+        source = self.source_conv(source)
+        x = x + source
 
-        x = self.conv(x)
+        xn = None
+        for c in self.convs:
+            x2 = c(x)
+            if xn is None:
+                xn = x2
+            else:
+                xn += x2
+        x = xn / self.kernels
 
+        x = self.post_snake(x)
         x = self.post_conv(x)
         x = F.tanh(x)
 
