@@ -66,6 +66,8 @@ class PreEncoder(nn.Module):
         self.convs2 = nn.Sequential(
             weight_norm(nn.Conv1d(256 + 1, 512, 3, padding=1)),
             nn.GLU(1),
+            weight_norm(nn.Conv1d(256, 512, 3, padding=1)),
+            nn.GLU(1),
             weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
         )
 

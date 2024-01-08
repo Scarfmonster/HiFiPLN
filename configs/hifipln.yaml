@@ -41,7 +41,9 @@ dataloader:
     persistent_workers: True
 model:
   snake_log: True
-  input_noise: 0.0
+  input_noise: 0.1
+  pitch_randomize: [-3, 3]
+  dropout: 0.1
   upsample_rates: [8, 8, 2, 2, 2]
   upsample_kernels: [16, 16, 4, 4, 4]
   upsample_initial: 512

@@ -3,18 +3,20 @@ from typing import Any
 
 import lightning as pl
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn.functional as F
+import torchaudio.functional as AF
 from omegaconf import DictConfig
 
+from model.ddsp.loss import MSSLoss, UVLoss
 from model.hifipln.discriminator import (
     MultiPeriodDiscriminator,
     MultiResolutionDiscriminator,
 )
 
-from ..utils import STFT, plot_mel, plot_snakes, plot_weights
+from ..utils import STFT, plot_mel, plot_snakes
 from .generator import HiFiPLN
-from model.ddsp.loss import UVLoss, MSSLoss
 
 
 class HiFiPlnTrainer(pl.LightningModule):
@@ -124,7 +126,30 @@ class HiFiPlnTrainer(pl.LightningModule):
 
         mel_lens = batch["audio_lens"] // self.config["hop_length"]
         mels = self.get_mels(audio)[:, :, : mel_lens.max()]
-        gen_mels = mels + torch.rand_like(mels) * self.config.model.input_noise
+
+        shift_range = self.config.model.get("pitch_randomize", None)
+        if shift_range is not None:
+            shift_steps = np.random.randint(shift_range[0], shift_range[1] + 1)
+            shift_audio = AF.pitch_shift(
+                audio,
+                sample_rate=self.config.sample_rate,
+                n_steps=shift_steps,
+                n_fft=2048,
+            )
+            gen_mels = self.get_mels(shift_audio)[:, :, : mel_lens.max()]
+        else:
+            gen_mels = mels
+
+        input_noise = self.config.model.get("input_noise", None)
+        if input_noise is not None and input_noise > 0:
+            input_noise = np.random.uniform(0, input_noise)
+            gen_mels = gen_mels + torch.rand_like(gen_mels) * input_noise
+
+        dropout = self.config.model.get("dropout", None)
+        if dropout is not None and dropout > 0:
+            dropout_rate = np.random.uniform(0, dropout)
+            gen_mels = F.dropout(gen_mels, p=dropout_rate, training=True, inplace=True)
+
         gen_audio, (_, _) = self.generator(gen_mels, pitches)
         gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
 
