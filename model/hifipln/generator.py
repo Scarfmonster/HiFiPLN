@@ -194,7 +194,7 @@ class HarmonicBlock(nn.Module):
 
         x = self.post_snake(x)
         x = self.post_conv(x)
-        x = F.tanh(x)
+        x = F.hardtanh(x, -1, 1)
 
         return x
 
@@ -284,6 +284,6 @@ class NoiseBlock(nn.Module):
 
         x = self.post_snake(x)
         x = self.post_conv(x)
-        x = F.tanh(x)
+        x = F.hardtanh(x, -1, 1)
 
         return x
