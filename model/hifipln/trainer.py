@@ -70,6 +70,9 @@ class HiFiPlnTrainer(pl.LightningModule):
                     if k.startswith("mrd.")
                 }
             )
+            self.generator.source.requires_grad_(False)
+            self.generator.harmonic_block.requires_grad_(False)
+            self.generator.noise_block.requires_grad_(False)
 
     def configure_optimizers(self):
         optim_g = torch.optim.AdamW(
@@ -188,10 +191,12 @@ class HiFiPlnTrainer(pl.LightningModule):
         loss_stft = self.stft_loss(audio, gen_audio)
         loss_mel = F.l1_loss(mels, gen_audio_mel)
 
-        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_mel
+        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_mel * 45.0
 
         self.manual_backward(loss_gen_all)
         optim_g.step()
+
+        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_mel
 
         self.log(
             "train/loss_gen",
