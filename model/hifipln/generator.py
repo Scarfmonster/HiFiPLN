@@ -9,8 +9,8 @@ from torch.nn.utils.parametrize import is_parametrized, remove_parametrizations
 
 from alias.act import Activation1d
 from alias.resample import DownSample1d
-from model.common import ResBlock, SnakeBlock, SnakeGamma
-from model.ddsp.generator import DDSP
+from model.common import SnakeBlock, SnakeGamma
+
 
 from ..utils import init_weights
 from .source import DDSP
@@ -98,6 +98,7 @@ class HarmonicBlock(nn.Module):
         self.snake_log = config.model.snake_log
         self.upsample_initial = config.model.upsample_initial
         self.upsample_rates = config.model.upsample_rates
+        self.upsample_num = len(self.upsample_rates)
         self.upsample_kernels = config.model.upsample_kernels
         self.kernel_sizes = config.model.kernel_sizes
         self.dilation_sizes = config.model.dilation_sizes
@@ -117,7 +118,7 @@ class HarmonicBlock(nn.Module):
 
         snake = SnakeGamma
 
-        for i in range(len(self.upsample_rates)):
+        for i in range(self.upsample_num):
             in_ch = self.upsample_initial // (2**i)
             out_ch = self.upsample_initial // (2 ** (i + 1))
             kernel = self.upsample_kernels[i]
@@ -172,7 +173,7 @@ class HarmonicBlock(nn.Module):
     def forward(self, x, source):
         x = self.pre_conv(x)
 
-        for i in range(len(self.upsample_rates)):
+        for i in range(self.upsample_num):
             x = self.snakes[i](x)
             x = self.upsamples[i](x)
 
@@ -207,6 +208,7 @@ class NoiseBlock(nn.Module):
         self.snake_log = config.model.snake_log
         self.upsample_initial = config.model.upsample_initial
         self.upsample_rates = config.model.upsample_rates
+        self.upsample_num = len(self.upsample_rates)
         self.upsample_kernels = config.model.upsample_kernels
         self.kernel_sizes = config.model.kernel_sizes
         self.dilation_sizes = config.model.dilation_sizes
@@ -224,7 +226,7 @@ class NoiseBlock(nn.Module):
         self.source_conv = nn.ModuleList()
         self.snakes = nn.ModuleList()
 
-        for i in range(len(self.upsample_rates)):
+        for i in range(self.upsample_num):
             in_ch = self.upsample_initial // (2**i)
             out_ch = self.upsample_initial // (2 ** (i + 1))
             rate = self.upsample_rates[i]
@@ -282,13 +284,13 @@ class NoiseBlock(nn.Module):
     def forward(self, x, source):
         x = self.pre_conv(x)
 
-        for i in range(len(self.upsample_rates)):
+        for i in range(self.upsample_num):
             x = self.snakes[i](x)
             x = self.upsamples[i](x)
 
             source_x = self.downsamples[i](source)
             source_x = self.source_conv[i](source_x)
-            if i < len(self.upsample_rates) - 1:
+            if i < self.upsample_num - 1:
                 x = x + source_x
 
         xn = None

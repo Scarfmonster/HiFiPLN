@@ -95,7 +95,7 @@ class ExportableDDSP(torch.nn.Module):
         return wav
 
 
-def main(input_file, output_path, config):
+def main(input_file, output_path, config, dynamo=False):
     output_path = Path(output_path)
     if output_path.exists():
         print(f"Output path {output_path} already exists, deleting")
@@ -146,20 +146,27 @@ def main(input_file, output_path, config):
     mel = torch.randn(1, 64, 128)
     f0 = torch.randn(1, 64)
 
-    torch.onnx.export(
-        model,
-        (mel, f0),
-        output_path / f"{config.type.lower()}.onnx",
-        input_names=["mel", "f0"],
-        output_names=["waveform"],
-        opset_version=17,
-        dynamic_axes={
-            "mel": {0: "batch", 1: "n_frames"},
-            "f0": {0: "batch", 1: "n_frames"},
-            "waveform": {0: "batch", 2: "wave_length"},
-        },
-        training=torch.onnx.TrainingMode.EVAL,
-    )
+    if not dynamo:
+        torch.onnx.export(
+            model,
+            (mel, f0),
+            output_path / f"{config.type.lower()}.onnx",
+            input_names=["mel", "f0"],
+            output_names=["waveform"],
+            opset_version=17,
+            dynamic_axes={
+                "mel": {0: "batch", 1: "n_frames"},
+                "f0": {0: "batch", 1: "n_frames"},
+                "waveform": {0: "batch", 2: "wave_length"},
+            },
+            training=torch.onnx.TrainingMode.EVAL,
+        )
+    else:
+        export_options = torch.onnx.ExportOptions(dynamic_shapes=True)
+        onnx_model = torch.onnx.dynamo_export(
+            model, export_options=export_options, mel=mel, f0=f0
+        )
+        onnx_model.save(output_path / f"{config.type.lower()}.onnx")
 
     print(f"ONNX exported")
 
@@ -171,8 +178,9 @@ if __name__ == "__main__":
     argparser.add_argument("--model", type=str, default=None)
     argparser.add_argument("--config", type=str, required=True)
     argparser.add_argument("--output", type=str, required=True)
+    argparser.add_argument("--dynamo", action="store_true")
 
     args = argparser.parse_args()
 
     config = OmegaConf.load(args.config)
-    main(args.model, args.output, config)
+    main(args.model, args.output, config, dynamo=args.dynamo)
