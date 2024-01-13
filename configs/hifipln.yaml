@@ -18,6 +18,7 @@ dataset:
     segment_length: 16384
     pitch_shift: [-12, 12]
     loudness_shift: [0.25, 1.0]
+    return_vuv: True
   valid:
     path: "dataset/valid"
     segment_length: Null
@@ -41,8 +42,8 @@ dataloader:
     persistent_workers: True
 model:
   snake_log: True
+  uv_tolerance: 0.3
   input_noise: 0.0
-  pitch_randomize: [-3, 3]
   dropout: 0.0
   upsample_rates: [8, 8, 2, 2, 2]
   upsample_kernels: [16, 16, 4, 4, 4]

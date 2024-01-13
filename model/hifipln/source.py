@@ -28,7 +28,11 @@ class DDSP(nn.Module):
         self.window = torch.hann_window(self.win_length)
 
         self.stft = STFT(
-            self.n_fft, self.hop_length, self.win_length, self.window, center=True
+            self.n_fft,
+            self.hop_length,
+            self.win_length,
+            self.window,
+            center=True,
         )
 
         # Mel2Control
@@ -125,7 +129,6 @@ class DDSP(nn.Module):
 
         mags = mags * src_param
         phase = phase + src_allpass
-        phase = phase.clamp(-torch.pi, torch.pi)
 
         harmonic_real = mags * torch.cos(phase)
         harmonic_imag = mags * torch.sin(phase)

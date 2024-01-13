@@ -30,7 +30,7 @@ class HiFiPlnTrainer(pl.LightningModule):
 
         self.mss_loss = MSSLoss([2048, 1024, 512, 256])
 
-        self.uv_loss = UVLoss(config.hop_length, uv_tolerance=0)
+        self.uv_loss = UVLoss(config.hop_length, uv_tolerance=config.model.uv_tolerance)
 
         self.stft_config = config.mrd.resolutions
 
@@ -122,38 +122,28 @@ class HiFiPlnTrainer(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         optim_g, optim_d = self.optimizers()
 
-        pitches, audio = (
+        pitches, audio, vuv = (
             batch["pitch"].float(),
             batch["audio"].float(),
+            batch["vuv"].float(),
         )
 
         mel_lens = batch["audio_lens"] // self.config["hop_length"]
         mels = self.get_mels(audio)[:, :, : mel_lens.max()]
 
-        shift_range = self.config.model.get("pitch_randomize", None)
-        if shift_range is not None:
-            shift_steps = np.random.randint(shift_range[0], shift_range[1] + 1)
-            shift_audio = AF.pitch_shift(
-                audio,
-                sample_rate=self.config.sample_rate,
-                n_steps=shift_steps,
-                n_fft=2048,
-            )
-            gen_mels = self.get_mels(shift_audio)[:, :, : mel_lens.max()]
-        else:
-            gen_mels = mels
+        gen_mels = mels
 
         input_noise = self.config.model.get("input_noise", None)
         if input_noise is not None and input_noise > 0:
             input_noise = np.random.uniform(0, input_noise)
-            gen_mels = gen_mels + torch.rand_like(gen_mels) * input_noise
+            gen_mels = mels + torch.rand_like(mels) * input_noise
 
         dropout = self.config.model.get("dropout", None)
         if dropout is not None and dropout > 0:
             dropout_rate = np.random.uniform(0, dropout)
             gen_mels = F.dropout(gen_mels, p=dropout_rate, training=True, inplace=True)
 
-        gen_audio, (_, _) = self.generator(gen_mels, pitches)
+        gen_audio, (_, harmonic) = self.generator(gen_mels, pitches)
         gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
 
         # Generator
@@ -191,12 +181,17 @@ class HiFiPlnTrainer(pl.LightningModule):
         loss_stft = self.stft_loss(audio, gen_audio)
         loss_mel = F.l1_loss(mels, gen_audio_mel)
 
-        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_mel * 45.0
+        max_len = min(audio.shape[-1], gen_audio.shape[-1])
+        loss_uv = self.uv_loss(
+            gen_audio[:, :, :max_len], harmonic[:, :, :max_len], 1 - vuv
+        )
+
+        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_uv + loss_mel * 45.0
 
         self.manual_backward(loss_gen_all)
         optim_g.step()
 
-        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_mel
+        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_uv + loss_mel
 
         self.log(
             "train/loss_gen",
@@ -271,6 +266,16 @@ class HiFiPlnTrainer(pl.LightningModule):
         self.log(
             "train/loss_mel",
             loss_mel,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            f"train/loss_uv",
+            loss_uv,
             on_step=True,
             on_epoch=False,
             prog_bar=False,

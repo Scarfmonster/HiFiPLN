@@ -58,9 +58,10 @@ class PreEncoder(nn.Module):
         self.upsample_initial = config.model.upsample_initial
 
         self.convs1 = nn.Sequential(
-            weight_norm(nn.Conv1d(self.n_mels + 1, 256, 3, padding=1)),
+            weight_norm(nn.Conv1d(self.n_mels, 256, 3, padding=1)),
             nn.GroupNorm(4, 256),
             nn.GELU(),
+            weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
         )
 
         self.convs2 = nn.Sequential(
@@ -78,7 +79,6 @@ class PreEncoder(nn.Module):
         self.convs2.apply(init_weights)
 
     def forward(self, x, f0):
-        x = torch.cat([x, f0], dim=1)
         x = self.convs1(x)
         x = torch.cat([x, f0], dim=1)
         x = self.convs2(x)
@@ -204,6 +204,7 @@ class NoiseBlock(nn.Module):
         super().__init__()
 
         self.n_mels = config.n_mels
+        self.snake_log = config.model.snake_log
         self.upsample_initial = config.model.upsample_initial
         self.upsample_rates = config.model.upsample_rates
         self.upsample_kernels = config.model.upsample_kernels
@@ -211,18 +212,25 @@ class NoiseBlock(nn.Module):
         self.dilation_sizes = config.model.dilation_sizes
         self.kernels = len(self.kernel_sizes)
 
+        snake = SnakeGamma
+
         self.pre_conv = weight_norm(
             nn.Conv1d(self.upsample_initial, self.upsample_initial, 7, padding=3)
         )
 
         self.upsamples = nn.ModuleList()
+        self.convs = nn.ModuleList()
+        self.downsamples = nn.ModuleList()
         self.source_conv = nn.ModuleList()
+        self.snakes = nn.ModuleList()
 
         for i in range(len(self.upsample_rates)):
             in_ch = self.upsample_initial // (2**i)
             out_ch = self.upsample_initial // (2 ** (i + 1))
             rate = self.upsample_rates[i]
             kernel = self.upsample_kernels[i]
+
+            self.snakes.append(snake(in_ch, logscale=self.snake_log))
 
             self.upsamples.append(
                 weight_norm(
@@ -236,27 +244,35 @@ class NoiseBlock(nn.Module):
                 )
             )
 
-        self.source_conv = weight_norm(
-            nn.Conv1d(
-                1,
-                out_ch,
-                17,
-                padding=8,
-            )
-        )
-
-        self.convs = nn.ModuleList()
-
-        for k, d in zip(self.kernel_sizes, self.dilation_sizes):
-            self.convs.append(
-                ResBlock(
-                    out_ch,
-                    kernel_size=k,
-                    dilation=d,
+            downs_rate = math.prod(self.upsample_rates[i + 1 :])
+            if downs_rate > 1:
+                self.downsamples.append(DownSample1d(1, downs_rate))
+            else:
+                self.downsamples.append(nn.Identity())
+            self.source_conv.append(
+                weight_norm(
+                    nn.Conv1d(
+                        1,
+                        out_ch,
+                        kernel + 1,
+                        padding=(kernel + 1) // 2,
+                    )
                 )
             )
 
-        self.post_snake = Activation1d(SnakeGamma(out_ch), out_ch)
+        for k, d in zip(self.kernel_sizes, self.dilation_sizes):
+            self.convs.append(
+                SnakeBlock(
+                    out_ch,
+                    kernel_size=k,
+                    dilation=d,
+                    snake_log=self.snake_log,
+                )
+            )
+
+        self.post_snake = Activation1d(
+            SnakeGamma(out_ch, logscale=self.snake_log), out_ch
+        )
         self.post_conv = weight_norm(nn.Conv1d(out_ch, 1, 7, padding=3))
 
         self.pre_conv.apply(init_weights)
@@ -267,11 +283,13 @@ class NoiseBlock(nn.Module):
         x = self.pre_conv(x)
 
         for i in range(len(self.upsample_rates)):
-            x = F.gelu(x)
+            x = self.snakes[i](x)
             x = self.upsamples[i](x)
 
-        source = self.source_conv(source)
-        x = x + source
+            source_x = self.downsamples[i](source)
+            source_x = self.source_conv[i](source_x)
+            if i < len(self.upsample_rates) - 1:
+                x = x + source_x
 
         xn = None
         for c in self.convs:
@@ -280,6 +298,7 @@ class NoiseBlock(nn.Module):
                 xn = x2
             else:
                 xn += x2
+            xn = xn + source_x
         x = xn / self.kernels
 
         x = self.post_snake(x)

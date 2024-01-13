@@ -68,7 +68,6 @@ class SnakeBlock(nn.Module):
         kernel_size: int = 3,
         dilation: tuple[int] = (1, 3, 5),
         snake_log: bool = False,
-        antialias: bool = False,
     ):
         super().__init__()
 
