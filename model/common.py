@@ -68,6 +68,7 @@ class SnakeBlock(nn.Module):
         kernel_size: int = 3,
         dilation: tuple[int] = (1, 3, 5),
         snake_log: bool = False,
+        upsample: bool = True,
     ):
         super().__init__()
 
@@ -108,8 +109,12 @@ class SnakeBlock(nn.Module):
         for _ in range(len(dilation) * 2):
             self.snakes.append(SnakeGamma(channels, logscale=snake_log))
 
-        self.upsample = UpSample1d(channels, 2)
-        self.downsample = DownSample1d(channels, 2)
+        if upsample:
+            self.upsample = UpSample1d(channels, 2)
+            self.downsample = DownSample1d(channels, 2)
+        else:
+            self.upsample = nn.Identity()
+            self.downsample = nn.Identity()
 
     def forward(self, x):
         for i in range(self.dilations):

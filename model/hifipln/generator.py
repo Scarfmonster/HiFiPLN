@@ -96,6 +96,7 @@ class HarmonicBlock(nn.Module):
         super().__init__()
         self.n_mels = config.n_mels
         self.snake_log = config.model.snake_log
+        self.snake_upsample = config.model.snake_upsample
         self.upsample_initial = config.model.upsample_initial
         self.upsample_rates = config.model.upsample_rates
         self.upsample_num = len(self.upsample_rates)
@@ -142,6 +143,7 @@ class HarmonicBlock(nn.Module):
                         kernel_size=k,
                         dilation=d,
                         snake_log=self.snake_log,
+                        upsample=self.snake_upsample,
                     )
                 )
 
@@ -206,6 +208,7 @@ class NoiseBlock(nn.Module):
 
         self.n_mels = config.n_mels
         self.snake_log = config.model.snake_log
+        self.snake_upsample = config.model.snake_upsample
         self.upsample_initial = config.model.upsample_initial
         self.upsample_rates = config.model.upsample_rates
         self.upsample_num = len(self.upsample_rates)
@@ -269,6 +272,7 @@ class NoiseBlock(nn.Module):
                     kernel_size=k,
                     dilation=d,
                     snake_log=self.snake_log,
+                    upsample=self.snake_upsample,
                 )
             )
 

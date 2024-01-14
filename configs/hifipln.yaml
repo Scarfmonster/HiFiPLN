@@ -43,6 +43,7 @@ dataloader:
     persistent_workers: True
 model:
   snake_log: True
+  snake_upsample: False
   uv_tolerance: 0.3
   input_noise: 0.0
   dropout: 0.0
