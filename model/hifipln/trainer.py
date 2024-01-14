@@ -120,6 +120,8 @@ class HiFiPlnTrainer(pl.LightningModule):
         return loss_stft
 
     def training_step(self, batch, batch_idx):
+        current_step = self.global_step // 2
+
         optim_g, optim_d = self.optimizers()
 
         pitches, audio, vuv = (
@@ -185,6 +187,9 @@ class HiFiPlnTrainer(pl.LightningModule):
         loss_uv = self.uv_loss(
             gen_audio[:, :, :max_len], harmonic[:, :, :max_len], 1 - vuv
         )
+
+        if current_step > self.config.get("uv_detach_step", 0):
+            loss_uv = loss_uv.detach()
 
         loss_gen_all = gen_loss + feat_loss + loss_stft + loss_uv + loss_mel * 45.0
 
