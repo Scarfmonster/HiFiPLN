@@ -283,6 +283,7 @@ class NoiseBlock(nn.Module):
 
         self.pre_conv.apply(init_weights)
         self.upsamples.apply(init_weights)
+        self.source_conv.apply(init_weights)
         self.post_conv.apply(init_weights)
 
     def forward(self, x, source):
