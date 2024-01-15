@@ -145,7 +145,7 @@ class HiFiPlnTrainer(pl.LightningModule):
             dropout_rate = np.random.uniform(0, dropout)
             gen_mels = F.dropout(gen_mels, p=dropout_rate, training=True, inplace=True)
 
-        gen_audio, (_, harmonic) = self.generator(gen_mels, pitches)
+        gen_audio, (_, harmonic), _ = self.generator(gen_mels, pitches)
         gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
 
         # Generator
@@ -344,7 +344,9 @@ class HiFiPlnTrainer(pl.LightningModule):
         mel_lens = batch["audio_lens"] // self.config.hop_length
 
         mels = self.get_mels(audios)[:, :, : mel_lens.max()]
-        gen_audio, (harmonic, noise) = self.generator(mels, pitches)
+        gen_audio, (harmonic, noise), (src_harmonic, src_noise) = self.generator(
+            mels, pitches
+        )
         gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
 
         max_len = min(audios.shape[-1], gen_audio.shape[-1])
@@ -418,13 +420,6 @@ class HiFiPlnTrainer(pl.LightningModule):
                 global_step=current_step,
             )
 
-            # image_weights = plot_weights(self.generator)
-            # self.logger.experiment.add_figure(
-            #     f"weights/weights",
-            #     image_weights,
-            #     global_step=current_step,
-            # )
-
             for idx, (
                 mel,
                 gen_mel,
@@ -432,6 +427,8 @@ class HiFiPlnTrainer(pl.LightningModule):
                 gen_audio,
                 harmonic_audio,
                 noise_audio,
+                src_harmonic_audio,
+                src_noise_audio,
                 mel_len,
                 audio_len,
             ) in enumerate(
@@ -442,6 +439,8 @@ class HiFiPlnTrainer(pl.LightningModule):
                     gen_audio.type(torch.float32).cpu().numpy(),
                     harmonic.type(torch.float32).cpu().numpy(),
                     noise.type(torch.float32).cpu().numpy(),
+                    src_harmonic.type(torch.float32).cpu().numpy(),
+                    src_noise.type(torch.float32).cpu().numpy(),
                     mel_lens.cpu().numpy(),
                     batch["audio_lens"].cpu().numpy(),
                 )
@@ -480,6 +479,18 @@ class HiFiPlnTrainer(pl.LightningModule):
                 self.logger.experiment.add_audio(
                     f"sample-{idx}/wavs/noise",
                     noise_audio[0, :audio_len],
+                    global_step=current_step,
+                    sample_rate=self.config.sample_rate,
+                )
+                self.logger.experiment.add_audio(
+                    f"sample-{idx}/wavs/src_harmonic",
+                    src_harmonic_audio[0, :audio_len],
+                    global_step=current_step,
+                    sample_rate=self.config.sample_rate,
+                )
+                self.logger.experiment.add_audio(
+                    f"sample-{idx}/wavs/src_noise",
+                    src_noise_audio[0, :audio_len],
                     global_step=current_step,
                     sample_rate=self.config.sample_rate,
                 )

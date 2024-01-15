@@ -28,14 +28,14 @@ class HiFiPLN(nn.Module):
 
     def forward(self, x, f0):
         x = self.pre_encoder(x, f0)
-        _, (harmonic, noise) = self.source(x, f0)
-        harmonic = self.harmonic_block(x, harmonic)
-        noise = self.noise_block(x, noise)
+        _, (src_harmonic, src_noise) = self.source(x, f0)
+        harmonic = self.harmonic_block(x, src_harmonic)
+        noise = self.noise_block(x, src_noise)
 
         waveform = harmonic + noise
         waveform = F.hardtanh(waveform, -1, 1)
 
-        return waveform, (harmonic, noise)
+        return waveform, (harmonic, noise), (src_harmonic, src_noise)
 
     def remove_parametrizations(self):
         param = 0
@@ -249,21 +249,14 @@ class NoiseBlock(nn.Module):
                 )
             )
 
-            downs_rate = math.prod(self.upsample_rates[i + 1 :])
-            if downs_rate > 1:
-                self.downsamples.append(DownSample1d(1, downs_rate))
-            else:
-                self.downsamples.append(nn.Identity())
-            self.source_conv.append(
-                weight_norm(
-                    nn.Conv1d(
-                        1,
-                        out_ch,
-                        kernel + 1,
-                        padding=(kernel + 1) // 2,
-                    )
-                )
+        self.source_conv = weight_norm(
+            nn.Conv1d(
+                1,
+                out_ch,
+                kernel + 1,
+                padding=(kernel + 1) // 2,
             )
+        )
 
         for k, d in zip(self.kernel_sizes, self.dilation_sizes):
             self.convs.append(
@@ -293,10 +286,7 @@ class NoiseBlock(nn.Module):
             x = self.snakes[i](x)
             x = self.upsamples[i](x)
 
-            source_x = self.downsamples[i](source)
-            source_x = self.source_conv[i](source_x)
-            if i < self.upsample_num - 1:
-                x = x + source_x
+        source_x = self.source_conv(source)
 
         xn = None
         for c in self.convs:
