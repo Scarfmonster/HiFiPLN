@@ -12,7 +12,7 @@ lr: 0.0002
 lr_decay: 0.995
 adam_b1: 0.8
 adam_b2: 0.99
-uv_detach_step: 250000
+uv_detach_step: 200000
 dataset:
   train:
     path: "dataset/train"
