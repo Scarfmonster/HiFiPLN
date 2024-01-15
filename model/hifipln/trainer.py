@@ -497,3 +497,10 @@ class HiFiPlnTrainer(pl.LightningModule):
 
     def on_validation_end(self) -> None:
         torch.backends.cudnn.benchmark = True
+
+    def on_load_checkpoint(self, checkpoint):
+        # Delete from checkpoint keys that do not appear in self.state_dict()
+        for k in list(checkpoint["state_dict"].keys()):
+            if k not in self.state_dict():
+                print(f"Deleting {k} from checkpoint")
+                del checkpoint["state_dict"][k]
