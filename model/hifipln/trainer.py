@@ -197,7 +197,14 @@ class HiFiPlnTrainer(pl.LightningModule):
         if current_step > self.config.get("uv_detach_step", 0):
             loss_uv = loss_uv.detach()
 
-        loss_ddsp = self.mss_loss(audio[:, 0, :max_len], src_waveform[:, 0, :max_len])
+        loss_ddsp = self.mss_loss(
+            audio[:, 0, :max_len], src_waveform[:, 0, :max_len]
+        ) + self.uv_loss(
+            src_waveform[:, :, :max_len], src_harmonic[:, :, :max_len], 1 - vuv
+        )
+
+        if current_step > self.config.get("ddsp_detach_step", 0):
+            loss_ddsp = loss_ddsp.detach()
 
         loss_gen_all = (
             gen_loss + feat_loss + loss_stft + loss_uv + loss_ddsp + loss_mel * 45.0
