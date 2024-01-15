@@ -30,7 +30,7 @@ class HiFiPlnTrainer(pl.LightningModule):
 
         self.mss_loss = MSSLoss([2048, 1024, 512, 256])
 
-        self.uv_loss = UVLoss(config.hop_length, uv_tolerance=config.model.uv_tolerance)
+        self.uv_loss = UVLoss(config.hop_length, uv_tolerance=config.uv_tolerance)
 
         self.stft_config = config.mrd.resolutions
 
@@ -135,12 +135,12 @@ class HiFiPlnTrainer(pl.LightningModule):
 
         gen_mels = mels
 
-        input_noise = self.config.model.get("input_noise", None)
+        input_noise = self.config.get("input_noise", None)
         if input_noise is not None and input_noise > 0:
             input_noise = np.random.uniform(0, input_noise)
             gen_mels = mels + torch.rand_like(mels) * input_noise
 
-        dropout = self.config.model.get("dropout", None)
+        dropout = self.config.get("dropout", None)
         if dropout is not None and dropout > 0:
             dropout_rate = np.random.uniform(0, dropout)
             gen_mels = F.dropout(gen_mels, p=dropout_rate, training=True, inplace=True)

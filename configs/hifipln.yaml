@@ -13,6 +13,9 @@ lr_decay: 0.995
 adam_b1: 0.8
 adam_b2: 0.99
 uv_detach_step: 200000
+uv_tolerance: 0.3
+input_noise: 0.0
+dropout: 0.0
 dataset:
   train:
     path: "dataset/train"
@@ -44,9 +47,6 @@ dataloader:
 model:
   snake_log: True
   snake_upsample: False
-  uv_tolerance: 0.3
-  input_noise: 0.0
-  dropout: 0.0
   upsample_rates: [8, 8, 2, 2, 2]
   upsample_kernels: [16, 16, 4, 4, 4]
   upsample_initial: 512
