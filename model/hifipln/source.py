@@ -5,7 +5,7 @@ from omegaconf import DictConfig
 from torch.nn.utils.parametrizations import weight_norm
 
 from ..utils import init_weights
-from .stft import STFT
+from ..stft import STFT
 
 
 class DDSP(nn.Module):

@@ -5,7 +5,7 @@ from omegaconf import DictConfig
 from torch.nn.utils.parametrize import is_parametrized, remove_parametrizations
 
 from .mel2control import Mel2Control
-from .stft import STFT
+from ..stft import STFT
 
 
 class DDSP(nn.Module):
