@@ -253,8 +253,8 @@ class NoiseBlock(nn.Module):
             nn.Conv1d(
                 1,
                 out_ch,
-                kernel + 1,
-                padding=(kernel + 1) // 2,
+                17,
+                padding=8,
             )
         )
 
@@ -286,7 +286,8 @@ class NoiseBlock(nn.Module):
             x = self.snakes[i](x)
             x = self.upsamples[i](x)
 
-        source_x = self.source_conv(source)
+        source = self.source_conv(source)
+        x = x + source
 
         xn = None
         for c in self.convs:
@@ -295,7 +296,6 @@ class NoiseBlock(nn.Module):
                 xn = x2
             else:
                 xn += x2
-            xn = xn + source_x
         x = xn / self.kernels
 
         x = self.post_snake(x)
