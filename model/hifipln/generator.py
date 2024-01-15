@@ -11,9 +11,9 @@ from alias.act import Activation1d
 from alias.resample import DownSample1d
 from model.common import SnakeBlock, SnakeGamma
 
-
 from ..utils import init_weights
 from .source import DDSP
+from .encoder import PreEncoder
 
 
 class HiFiPLN(nn.Module):
@@ -48,47 +48,6 @@ class HiFiPLN(nn.Module):
     def prune(self):
         self.harmonic_block.prune()
         self.noise_block.prune()
-
-
-class PreEncoder(nn.Module):
-    def __init__(self, config: DictConfig) -> None:
-        super().__init__()
-
-        self.n_mels = config.n_mels
-        self.upsample_initial = config.model.upsample_initial
-
-        self.convs1 = nn.Sequential(
-            weight_norm(nn.Conv1d(self.n_mels, 256, 3, padding=1)),
-            nn.GroupNorm(4, 256),
-            nn.GELU(),
-            weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
-        )
-
-        self.convs2 = nn.Sequential(
-            weight_norm(nn.Conv1d(256 + 1, 512, 3, padding=1)),
-            nn.GLU(1),
-            weight_norm(nn.Conv1d(256, 512, 3, padding=1)),
-            nn.GLU(1),
-            weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
-        )
-
-        self.norm = nn.LayerNorm(256)
-        self.post = weight_norm(nn.Linear(256, self.upsample_initial))
-
-        self.convs1.apply(init_weights)
-        self.convs2.apply(init_weights)
-
-    def forward(self, x, f0):
-        x = self.convs1(x)
-        x = torch.cat([x, f0], dim=1)
-        x = self.convs2(x)
-
-        x = x.transpose(1, 2)
-        x = self.norm(x)
-        x = self.post(x)
-        x = x.transpose(1, 2)
-
-        return x
 
 
 class HarmonicBlock(nn.Module):

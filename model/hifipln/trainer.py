@@ -145,8 +145,14 @@ class HiFiPlnTrainer(pl.LightningModule):
             dropout_rate = np.random.uniform(0, dropout)
             gen_mels = F.dropout(gen_mels, p=dropout_rate, training=True, inplace=True)
 
-        gen_audio, (_, harmonic), _ = self.generator(gen_mels, pitches)
+        gen_audio, (_, harmonic), (src_harmonic, src_noise) = self.generator(
+            gen_mels, pitches
+        )
         gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
+
+        src_waveform = src_harmonic + src_noise
+        src_waveform = F.hardtanh(src_waveform, -1, 1)
+        # src_waveform_mel = self.get_mels(src_waveform)[:, :, : mel_lens.max()]
 
         # Generator
         optim_g.zero_grad(set_to_none=True)
@@ -191,12 +197,16 @@ class HiFiPlnTrainer(pl.LightningModule):
         if current_step > self.config.get("uv_detach_step", 0):
             loss_uv = loss_uv.detach()
 
-        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_uv + loss_mel * 45.0
+        loss_ddsp = self.mss_loss(audio[:, 0, :max_len], src_waveform[:, 0, :max_len])
+
+        loss_gen_all = (
+            gen_loss + feat_loss + loss_stft + loss_uv + loss_ddsp + loss_mel * 45.0
+        )
 
         self.manual_backward(loss_gen_all)
         optim_g.step()
 
-        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_uv + loss_mel
+        loss_gen_all = gen_loss + feat_loss + loss_stft + loss_uv + loss_ddsp + loss_mel
 
         self.log(
             "train/loss_gen",
@@ -281,6 +291,16 @@ class HiFiPlnTrainer(pl.LightningModule):
         self.log(
             f"train/loss_uv",
             loss_uv,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            batch_size=pitches.shape[0],
+        )
+
+        self.log(
+            f"train/loss_ddsp",
+            loss_ddsp,
             on_step=True,
             on_epoch=False,
             prog_bar=False,
