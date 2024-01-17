@@ -6,6 +6,7 @@ from torch.nn.utils.parametrizations import weight_norm
 
 from ..utils import init_weights
 from ..stft import STFT
+from ..ddsp.mel2control import Mel2Control
 
 
 class DDSP(nn.Module):
@@ -37,12 +38,13 @@ class DDSP(nn.Module):
 
         # Mel2Control
         split_map = {
+            "initial": self.upsample_initial,
             "harmonic_magnitude": self.win_length // 2 + 1,
             "harmonic_phase": self.win_length // 2 + 1,
             "noise_magnitude": self.win_length // 2 + 1,
         }
 
-        self.mel2ctrl = Encoder(self.upsample_initial, split_map)
+        self.mel2ctrl = Mel2Control(self.n_mels, split_map)
 
     def forward(self, mel_frames, f0_frames):
         """
@@ -70,6 +72,8 @@ class DDSP(nn.Module):
         phase = 2 * torch.pi * x
         phase_frames = phase[:, :: self.hop_length, :]
 
+        mel_frames = mel_frames.transpose(1, 2)
+
         # parameter prediction
         ctrls = self.mel2ctrl(mel_frames, phase_frames)
 
@@ -94,9 +98,13 @@ class DDSP(nn.Module):
         signal = harmonic + noise
         signal = F.hardtanh(signal, min_val=-1, max_val=1)
 
-        return signal.unsqueeze(-2), (
-            harmonic.unsqueeze(-2),
-            noise.unsqueeze(-2),
+        return (
+            signal.unsqueeze(-2),
+            ctrls["initial"].transpose(1, 2),
+            (
+                harmonic.unsqueeze(-2),
+                noise.unsqueeze(-2),
+            ),
         )
 
     def combsub(self, f0, x, ctrls):
@@ -135,62 +143,3 @@ class DDSP(nn.Module):
         harmonic = self.stft.istft(harmonic_real, harmonic_imag, combtooth.shape[-1])
 
         return harmonic
-
-
-class Encoder(nn.Module):
-    def __init__(self, inputs: int, output_splits) -> None:
-        super().__init__()
-
-        self.output_splits = output_splits
-
-        self.input = nn.Sequential(
-            weight_norm(nn.Conv1d(inputs, 256, 3, padding=1)),
-            nn.GroupNorm(4, 256),
-            nn.GELU(),
-            weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
-        )
-
-        self.phase = nn.Linear(1, 256)
-
-        self.encoder = nn.Sequential(
-            weight_norm(nn.Conv1d(256, 512, 3, padding=1)),
-            nn.GLU(1),
-            weight_norm(nn.Conv1d(256, 512, 3, padding=1)),
-            nn.GLU(1),
-            weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
-        )
-
-        self.norm = nn.LayerNorm(256)
-
-        self.n_out = sum([v for k, v in output_splits.items()])
-        self.output = nn.Linear(256, self.n_out)
-
-        self.apply(init_weights)
-
-    def forward(self, x, phase):
-        x = self.input(x).transpose(1, 2)
-        x = x + self.phase(phase / torch.pi)
-
-        x = x.transpose(1, 2)
-        x = self.encoder(x)
-        x = x.transpose(1, 2)
-
-        x = self.norm(x)
-        x = self.output(x)
-
-        x = split_to_dict(x, self.output_splits)
-
-        return x
-
-
-def split_to_dict(tensor, tensor_splits):
-    """Split a tensor into a dictionary of multiple tensors."""
-    labels = []
-    sizes = []
-
-    for k, v in tensor_splits.items():
-        labels.append(k)
-        sizes.append(v)
-
-    tensors = torch.split(tensor, sizes, dim=-1)
-    return dict(zip(labels, tensors))

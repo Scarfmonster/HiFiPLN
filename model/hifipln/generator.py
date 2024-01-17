@@ -13,21 +13,17 @@ from model.common import SnakeBlock, SnakeGamma
 
 from ..utils import init_weights
 from .source import DDSP
-from .encoder import PreEncoder
 
 
 class HiFiPLN(nn.Module):
     def __init__(self, config: DictConfig):
         super().__init__()
 
-        self.pre_encoder = PreEncoder(config)
         self.source = DDSP(config)
-
         self.updown_block = UpDownSampleBlock(config)
 
     def forward(self, x, f0):
-        x = self.pre_encoder(x, f0)
-        src, (src_harmonic, src_noise) = self.source(x, f0)
+        src, x, (src_harmonic, src_noise) = self.source(x, f0)
         waveform = self.updown_block(x, src)
 
         return waveform, (src_harmonic, src_noise)
