@@ -12,9 +12,8 @@ lr: 0.0002
 lr_decay: 0.995
 adam_b1: 0.8
 adam_b2: 0.99
-uv_detach_step: 200000
 ddsp_detach_step: 50000
-uv_tolerance: 0.3
+uv_tolerance: 0.05
 input_noise: 0.0
 dropout: 0.0
 dataset:

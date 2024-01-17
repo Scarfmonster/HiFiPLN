@@ -22,9 +22,8 @@ class PreEncoder(nn.Module):
             weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
         )
 
-        # self.attention = nn.MultiheadAttention(256, 8, dropout=0.1, batch_first=True)
-        self.attention = Attention(256, heads=8, dim_head=32)
         self.norm1 = nn.LayerNorm(256)
+        self.attention1 = Attention(256, heads=8, dim_head=32)
 
         self.convs2 = nn.Sequential(
             weight_norm(nn.Conv1d(256 + 1, 512, 3, padding=1)),
@@ -35,6 +34,9 @@ class PreEncoder(nn.Module):
         )
 
         self.norm2 = nn.LayerNorm(256)
+        self.attention2 = Attention(256, heads=8, dim_head=32)
+
+        self.norm3 = nn.LayerNorm(256)
         self.post = weight_norm(nn.Linear(256, self.upsample_initial))
 
         self.convs1.apply(init_weights)
@@ -42,15 +44,19 @@ class PreEncoder(nn.Module):
 
     def forward(self, x, f0):
         x = self.convs1(x)
+
         x = x.transpose(1, 2)
-        a = self.attention(self.norm1(x))
+        a = self.attention1(self.norm1(x))
         x = x + a
         x = x.transpose(1, 2)
+
         x = torch.cat([x, f0], dim=1)
         x = self.convs2(x)
 
         x = x.transpose(1, 2)
-        x = self.norm2(x)
+        a = self.attention2(self.norm2(x))
+        x = x + a
+        x = self.norm3(x)
         x = self.post(x)
         x = x.transpose(1, 2)
 
