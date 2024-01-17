@@ -20,7 +20,7 @@ def split_to_dict(tensor, tensor_splits):
 
 
 class Mel2Control(nn.Module):
-    def __init__(self, input_channel, output_splits):
+    def __init__(self, input_channel, output_splits, layers=3):
         super().__init__()
         self.output_splits = output_splits
         self.phase_embed = nn.Linear(1, 256)
@@ -34,7 +34,7 @@ class Mel2Control(nn.Module):
 
         # transformer
         self.decoder = PCmer(
-            num_layers=3,
+            num_layers=layers,
             num_heads=8,
             dim_model=256,
             dim_keys=256,

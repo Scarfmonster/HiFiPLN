@@ -16,7 +16,7 @@ class DDSP(nn.Module):
         config (DictConfig): Configuration dictionary.
     """
 
-    def __init__(self, config: DictConfig) -> None:
+    def __init__(self, config: DictConfig, layers=3) -> None:
         super().__init__()
 
         self.sample_rate = config.sample_rate

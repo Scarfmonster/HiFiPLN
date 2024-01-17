@@ -12,18 +12,25 @@ from alias.resample import DownSample1d
 from model.common import SnakeBlock, SnakeGamma
 
 from ..utils import init_weights
-from .source import DDSP
+from ..ddsp.generator import DDSP
+from .encoder import PreEncoder
 
 
 class HiFiPLN(nn.Module):
     def __init__(self, config: DictConfig):
         super().__init__()
+        self.n_mels = config.n_mels
+        self.upsample_initial = config.model.upsample_initial
 
-        self.source = DDSP(config)
+        self.source = DDSP(config, layers=1)
+        self.encoder = PreEncoder(config, self.n_mels + self.upsample_initial)
         self.updown_block = UpDownSampleBlock(config)
 
     def forward(self, x, f0):
-        src, x, (src_harmonic, src_noise) = self.source(x, f0)
+        x = self.encoder(x, f0)
+        src = x[:, self.upsample_initial :]
+        x = x[:, : self.upsample_initial]
+        src, (src_harmonic, src_noise) = self.source(src, f0)
         waveform = self.updown_block(x, src)
 
         return waveform, (src_harmonic, src_noise)

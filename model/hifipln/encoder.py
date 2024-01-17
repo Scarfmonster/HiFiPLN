@@ -9,7 +9,7 @@ from ..utils import init_weights
 
 
 class PreEncoder(nn.Module):
-    def __init__(self, config: DictConfig) -> None:
+    def __init__(self, config: DictConfig, outputs: int) -> None:
         super().__init__()
 
         self.n_mels = config.n_mels
@@ -19,25 +19,22 @@ class PreEncoder(nn.Module):
             weight_norm(nn.Conv1d(self.n_mels, 256, 3, padding=1)),
             nn.GroupNorm(4, 256),
             nn.GELU(),
-            weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
         )
 
         self.norm1 = nn.LayerNorm(256)
         self.attention1 = Attention(256, heads=8, dim_head=32)
+        self.dropout1 = nn.Dropout(0.1)
 
         self.convs2 = nn.Sequential(
             weight_norm(nn.Conv1d(256 + 1, 512, 3, padding=1)),
             nn.GLU(1),
-            weight_norm(nn.Conv1d(256, 512, 3, padding=1)),
-            nn.GLU(1),
             weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
+            nn.GELU(),
         )
-
         self.norm2 = nn.LayerNorm(256)
-        self.attention2 = Attention(256, heads=8, dim_head=32)
+        self.dropout2 = nn.Dropout(0.1)
 
-        self.norm3 = nn.LayerNorm(256)
-        self.post = weight_norm(nn.Linear(256, self.upsample_initial))
+        self.post = weight_norm(nn.Linear(256, outputs))
 
         self.convs1.apply(init_weights)
         self.convs2.apply(init_weights)
@@ -46,17 +43,18 @@ class PreEncoder(nn.Module):
         x = self.convs1(x)
 
         x = x.transpose(1, 2)
-        a = self.attention1(self.norm1(x))
+        a = self.attention1(x)
+        a = self.dropout1(a)
         x = x + a
+        x = self.norm1(x)
         x = x.transpose(1, 2)
 
-        x = torch.cat([x, f0], dim=1)
-        x = self.convs2(x)
-
+        c = self.convs2(torch.cat([x, f0], dim=1))
+        x = x + c
         x = x.transpose(1, 2)
-        a = self.attention2(self.norm2(x))
-        x = x + a
-        x = self.norm3(x)
+        x = self.norm2(x)
+        x = self.dropout2(x)
+
         x = self.post(x)
         x = x.transpose(1, 2)
 
