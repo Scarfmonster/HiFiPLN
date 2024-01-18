@@ -22,7 +22,7 @@ class PreEncoder(nn.Module):
 
         self.norm1 = nn.LayerNorm(256)
         self.attention1 = Attention(256, heads=8, dim_head=32)
-        self.dropout1 = nn.Dropout(0.1)
+        self.dropout1 = nn.Dropout(0.2)
 
         self.convs2 = nn.Sequential(
             weight_norm(nn.Conv1d(256 + 1, 512, 3, padding=1)),
@@ -31,7 +31,7 @@ class PreEncoder(nn.Module):
             nn.GELU(),
         )
         self.norm2 = nn.LayerNorm(256)
-        self.dropout2 = nn.Dropout(0.1)
+        self.dropout2 = nn.Dropout(0.2)
 
         self.post = weight_norm(nn.Linear(256, outputs))
 
