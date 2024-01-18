@@ -1,6 +1,5 @@
 import math
 
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from omegaconf import DictConfig
@@ -11,8 +10,8 @@ from alias.act import Activation1d
 from alias.resample import DownSample1d
 from model.common import SnakeBlock, SnakeGamma
 
-from ..utils import init_weights
 from ..ddsp.generator import DDSP
+from ..utils import init_weights
 from .encoder import PreEncoder
 
 
