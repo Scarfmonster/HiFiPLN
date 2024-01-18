@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torchaudio.functional as AF
 from omegaconf import DictConfig
 
 from model.ddsp.loss import MSSLoss, UVLoss
