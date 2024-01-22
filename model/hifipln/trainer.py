@@ -70,8 +70,7 @@ class HiFiPlnTrainer(pl.LightningModule):
                 }
             )
             self.generator.source.requires_grad_(False)
-            self.generator.harmonic_block.requires_grad_(False)
-            self.generator.noise_block.requires_grad_(False)
+            self.generator.updown_block.requires_grad_(False)
 
     def configure_optimizers(self):
         optim_g = torch.optim.AdamW(
@@ -137,7 +136,11 @@ class HiFiPlnTrainer(pl.LightningModule):
         input_noise = self.config.get("input_noise", None)
         if input_noise is not None and input_noise > 0:
             input_noise = np.random.uniform(0, input_noise)
-            gen_mels = mels + torch.rand_like(mels) * input_noise
+            max_per_band = torch.max(torch.abs(mels), dim=-1).values[:, :, None]
+            rand = torch.rand_like(mels)
+            rand = rand * max_per_band
+            rand = rand * input_noise
+            gen_mels = mels + rand
 
         dropout = self.config.get("dropout", None)
         if dropout is not None and dropout > 0:
