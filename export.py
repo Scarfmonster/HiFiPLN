@@ -95,7 +95,7 @@ class ExportableDDSP(torch.nn.Module):
         return wav
 
 
-def main(input_file, output_path, config, dynamo=False):
+def main(input_file, output_path, config, best=False, dynamo=False):
     output_path = Path(output_path)
     if output_path.exists():
         print(f"Output path {output_path} already exists, deleting")
@@ -124,14 +124,21 @@ def main(input_file, output_path, config, dynamo=False):
 
         files = [f for f in os.listdir(input_file) if f.endswith(".ckpt")]
         if len(files) > 0:
+            best_epoch = 100
             last_epoch = 0
-            last_filename = ""
-            for f in files:
-                step = int(re.search(r"(?:step=)(\d+)", f).group(1))
-                if step > last_epoch:
-                    last_epoch = step
-                    last_filename = f
-            input_file = os.path.join(input_file, last_filename)
+            choice = 0
+            for i, f in enumerate(files):
+                if best:
+                    loss = float(re.search(r"(?:loss=)(\d+\.\d+)", f).group(1))
+                    if loss < best_epoch:
+                        best_epoch = loss
+                        choice = i
+                else:
+                    step = int(re.search(r"(?:step=)(\d+)", f).group(1))
+                    if step > last_epoch:
+                        last_epoch = step
+                        choice = i
+            input_file = os.path.join(input_file, files[choice])
 
     print(f"Exporting {input_file} to {output_path}")
 
@@ -179,8 +186,9 @@ if __name__ == "__main__":
     argparser.add_argument("--config", type=str, required=True)
     argparser.add_argument("--output", type=str, required=True)
     argparser.add_argument("--dynamo", action="store_true")
+    argparser.add_argument("--best", action="store_true")
 
     args = argparser.parse_args()
 
     config = OmegaConf.load(args.config)
-    main(args.model, args.output, config, dynamo=args.dynamo)
+    main(args.model, args.output, config, best=args.best, dynamo=args.dynamo)
