@@ -71,4 +71,4 @@ preprocessing:
     name: "ParselmouthPE"
     keep_zeros: False
   spectogram: False
-  vuv: False
+  vuv: True
