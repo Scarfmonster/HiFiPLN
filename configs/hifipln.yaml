@@ -64,6 +64,7 @@ mrd:
   resolutions: [[2048, 240, 1200], [1024, 120, 600], [512, 50, 240]] # (filter_length, hop_length, win_length)
   lrelu_slope: 0.1
 preprocessing:
+  threads: 8
   f0_min: 40
   f0_max: 1400
   pitch_extractor:
@@ -71,3 +72,5 @@ preprocessing:
     keep_zeros: False
   spectogram: False
   vuv: True
+  vuv_smoothing: 5
+  oversampling: 2
