@@ -3,26 +3,26 @@
 
 This is the code used to train the "HiFiPLN" vocoder.
 
-Pretrained model is available to download on the official [release page](https://utau.pl/hifipln/).
+Pretrained model is available for download on the official [release page](https://utau.pl/hifipln/).
+
+## Why HiFiPLN?
+Because a lot of PLN was spent training this thing.
 
 ## Training
 ### Data preparation
 ```bash
 python preproc.py --path dataset --clean --config "configs/hifipln.yaml"
 ```
-Please note that dataset prepared using the `hifipln.yaml` config is not compatible for VUV model training. To train the VUV model either prepare the dataset using it's config, or set `vuv: True` in `hifipln.yaml`.
-
-### VUV & Power models
-To train the VUV and Power submodels run
-```bash
-python train.py --config "configs/vuv.yaml"
-python train.py --config "configs/power.yaml"
-```
-Set the paths to the back checkpoints in `hifipln.yaml`.
 
 ### Main model
 ```bash
 python train.py --config "configs/hifipln.yaml"
+```
+
+### Finetuning
+Save the base checkpoint as ckpt/HiFiPLN.cktp then run:
+```bash
+python train.py --config "configs/hifipln-finetune.yaml"
 ```
 
 ## Exporting for use in OpenUtau
