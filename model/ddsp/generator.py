@@ -56,11 +56,12 @@ class DDSP(nn.Module):
             f0_frames = f0_frames[:, None]
         mel_frames = mel_frames.transpose(-1, -2)
         f0 = F.interpolate(
-            f0_frames,
-            scale_factor=self.hop_length,
+            torch.cat((f0_frames, f0_frames[:, :, -1:]), 2),
+            size=f0_frames.shape[-1] * self.hop_length + 1,
             mode="linear",
             align_corners=True,
         ).transpose(1, 2)
+        f0 = f0[:, :-1, :]
         x = torch.cumsum(f0.double() / self.sample_rate, axis=1)
         x = x - torch.round(x)
         x = x.to(f0)
