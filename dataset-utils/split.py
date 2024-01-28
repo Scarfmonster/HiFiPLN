@@ -56,6 +56,11 @@ for base_dir in args.folders:
                 audiofile = path.join(root, f)
                 makedirs(args.output, exist_ok=True)
                 print("Processing {}...".format(audiofile))
+                if path.exists(
+                    path.join(args.output, f"{base_prefix}-{base_name}-000.wav")
+                ):
+                    print("Already processed, skipping...")
+                    continue
                 allaudio = AudioSegment.from_file(audiofile, format="wav")
 
                 if len(allaudio) < args.min_length * 1000:
