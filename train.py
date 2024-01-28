@@ -134,14 +134,6 @@ if __name__ == "__main__":
             from model.ddsp.trainer import DDSPTrainer
 
             model = DDSPTrainer(config)
-        case "VUV":
-            from model.vuv.trainer import VUVTrainer
-
-            model = VUVTrainer(config)
-        case "Power":
-            from model.power.trainer import PowerTrainer
-
-            model = PowerTrainer(config)
 
     train_dataset = VocoderDataset(config, "train")
     valid_dataset = VocoderDataset(config, "valid")
