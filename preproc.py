@@ -9,7 +9,6 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torchaudio.functional import highpass_biquad
-from torchaudio.transforms import MelSpectrogram
 from tqdm import tqdm
 
 from pitch import BasePE
@@ -20,7 +19,6 @@ def process(
     config: DictConfig,
     audio_path: Path,
     pitch_extractor: BasePE,
-    spectogram_extractor: MelSpectrogram,
     vuv_extractor: VUVEstimator,
 ):
     save_path = audio_path.with_suffix(".npy")
@@ -33,20 +31,9 @@ def process(
     data["audio"] = audio
 
     audio = torch.from_numpy(audio).unsqueeze(0)
-
-    if spectogram_extractor:
-        mel = spectogram_extractor(audio).squeeze()
-        data["mel"] = mel.cpu().numpy()
-        pad_to = mel.shape[-1]
-    else:
-        pad_to = None
-
-    if config.preprocessing.vuv:
-        pad_to = None
-
     audio = highpass_biquad(audio, config.sample_rate, config.f_min)
 
-    f0, _, f0_0 = pitch_extractor(audio, pad_to)
+    f0, _, f0_0 = pitch_extractor(audio, None)
     f0 = f0.cpu().numpy()
 
     if config.preprocessing.vuv:
@@ -78,19 +65,6 @@ def run(config, files):
     current = current_process()
     pos = current._identity[0] - 1
 
-    if config.preprocessing.spectogram:
-        spectogram_extractor = MelSpectrogram(
-            sample_rate=config.sample_rate,
-            n_fft=config.n_fft,
-            win_length=config.win_length,
-            hop_length=config.hop_length,
-            f_min=config.f_min,
-            f_max=config.f_max,
-            n_mels=config.n_mels,
-        )
-    else:
-        spectogram_extractor = None
-
     hop_length = config.hop_length
 
     if config.preprocessing.vuv:
@@ -112,7 +86,7 @@ def run(config, files):
     )
 
     for af in tqdm(files, position=pos):
-        process(config, af, pitch_extractor, spectogram_extractor, vuv_extractor)
+        process(config, af, pitch_extractor, vuv_extractor)
 
 
 if __name__ == "__main__":

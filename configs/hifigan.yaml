@@ -60,4 +60,4 @@ preprocessing:
   pitch_extractor:
     name: "ParselmouthPE"
     keep_zeros: False
-  spectogram: False
+  vuv: False
