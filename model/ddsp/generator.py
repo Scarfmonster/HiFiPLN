@@ -37,7 +37,7 @@ class DDSP(nn.Module):
             "noise_magnitude": self.win_length // 2 + 1,
         }
 
-        self.mel2ctrl = Mel2Control(self.n_mels, split_map)
+        self.mel2ctrl = Mel2Control(self.n_mels, split_map, layers=layers)
 
     def forward(self, mel_frames, f0_frames, max_upsample_dim=32):
         """
