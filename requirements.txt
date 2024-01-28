@@ -4,6 +4,7 @@ matplotlib==3.8.2
 omegaconf==2.3.0
 onnx
 onnxscript
+pydub==0.25.1
 soundfile==0.12.1
 tensorboard
 torch
