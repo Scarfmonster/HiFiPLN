@@ -15,9 +15,10 @@ class PreEncoder(nn.Module):
         self.upsample_initial = config.model.upsample_initial
 
         self.convs1 = nn.Sequential(
-            weight_norm(nn.Conv1d(self.n_mels, 256, 3, padding=1)),
+            weight_norm(nn.Conv1d(self.n_mels + 1, 256, 3, padding=1)),
             nn.GroupNorm(4, 256),
             nn.GELU(),
+            weight_norm(nn.Conv1d(256, 256, 3, padding=1)),
         )
 
         self.norm1 = nn.LayerNorm(256)
@@ -39,6 +40,7 @@ class PreEncoder(nn.Module):
         self.convs2.apply(init_weights)
 
     def forward(self, x, f0):
+        x = torch.cat([x, f0], dim=1)
         x = self.convs1(x)
 
         x = x.transpose(1, 2)
