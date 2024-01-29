@@ -16,7 +16,7 @@ for base_dir in args.folders:
         folder_files = 0
         folder_length = 0.0
         for f in files:
-            if f.endswith((".wav", ".mp3")):
+            if f.lower().endswith((".wav", ".mp3")):
                 total_files += 1
                 folder_files += 1
                 audiofile = path.join(root, f)

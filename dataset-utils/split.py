@@ -51,7 +51,7 @@ for base_dir in args.folders:
             root_list = root_list[1:]
         base_prefix = "-".join(root_list)
         for f in files:
-            if f.endswith((".wav")):
+            if f.lower().endswith((".wav", ".mp3")):
                 base_name = path.splitext(f)[0]
                 audiofile = path.join(root, f)
                 makedirs(args.output, exist_ok=True)
@@ -61,7 +61,12 @@ for base_dir in args.folders:
                 ):
                     print("Already processed, skipping...")
                     continue
-                allaudio = AudioSegment.from_file(audiofile, format="wav")
+
+                _, extension = path.splitext(f.lower())
+                if extension == ".mp3":
+                    allaudio = AudioSegment.from_file(audiofile, format="mp3")
+                else:
+                    allaudio = AudioSegment.from_file(audiofile, format="wav")
 
                 if len(allaudio) < args.min_length * 1000:
                     continue
