@@ -381,3 +381,15 @@ class DDSPTrainer(pl.LightningModule):
                 )
 
                 plt.close(image_mels)
+
+    def on_train_start(self) -> None:
+        torch.backends.cudnn.benchmark = True
+
+    def on_train_end(self) -> None:
+        torch.backends.cudnn.benchmark = False
+
+    def on_validation_start(self) -> None:
+        torch.backends.cudnn.benchmark = False
+
+    def on_validation_end(self) -> None:
+        torch.backends.cudnn.benchmark = True
