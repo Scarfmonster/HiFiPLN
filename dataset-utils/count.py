@@ -27,7 +27,8 @@ for base_dir in args.folders:
                 allaudio = AudioSegment.from_file(audiofile)
                 total_length += len(allaudio)
                 folder_length += len(allaudio)
-        tabs = "\t" * (4 - len(root) // 8)
+        tabs = "\t" * (8 - len(root) // 8)
+        root = root.replace(base_dir, "")
         print(
             f"{root}{tabs}{datetime.timedelta(seconds=round(folder_length / 1000.0))}\t\t{folder_files} files"
         )
