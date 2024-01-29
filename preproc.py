@@ -122,5 +122,7 @@ if __name__ == "__main__":
     splits = np.array_split(np.array(audio_files), config.preprocessing.threads)
     splits = [(config, files) for files in splits]
 
-    with Pool(8, initializer=tqdm.set_lock, initargs=(RLock(),)) as pool:
+    with Pool(
+        config.preprocessing.threads, initializer=tqdm.set_lock, initargs=(RLock(),)
+    ) as pool:
         pool.starmap(run, splits)
