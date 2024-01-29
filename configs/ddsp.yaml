@@ -12,12 +12,14 @@ lr: 0.0004
 lr_decay: 0.99
 adam_b1: 0.8
 adam_b2: 0.99
+uv_detach_step: 50000
+uv_tolerance: 0.05
 dataset:
   train:
     path: "dataset/train"
     segment_length: 32768
     pitch_shift: [-12, 12]
-    loudness_shift: [0.25, 1.0]
+    loudness_shift: [0.5, 1.0]
     return_vuv: True
   valid:
     path: "dataset/valid"
@@ -29,7 +31,7 @@ dataloader:
   train:
     batch_size: 32
     shuffle: True
-    num_workers: 8
+    num_workers: 14
     pin_memory: True
     drop_last: True
     persistent_workers: True
@@ -43,7 +45,6 @@ dataloader:
 model:
   input_noise: 0.0
 model_ddsp:
-  uv_tolerance: 0.3
   use_discriminator: False
 mpd:
   periods:  [2, 3, 5, 7, 11]
