@@ -10,17 +10,25 @@ Because a lot of PLN was spent training this thing.
 
 ## Training
 ### Data preparation
+
 ```bash
-python preproc.py --path dataset --clean --config "configs/hifipln.yaml"
+python dataset-utils/split.py --length 2 --simple -sr 44100 -o "dataset/train" PATH_TO_DATASET
+python preproc.py --path dataset --config "configs/hifipln.yaml"
 ```
 
-### Main model
+### Train model
 ```bash
 python train.py --config "configs/hifipln.yaml"
 ```
 
+### Resume 
+```bash
+python train.py --config "configs/hifipln.yaml" --resume CKPT_PATH
+```
+You may leave CKPT_PATH empty and it will find the last checkpoint of the last run
+
 ### Finetuning
-Save the base checkpoint as ckpt/HiFiPLN.cktp then run:
+Save the base checkpoint as ckpt/HiFiPLN.ckpt then run:
 ```bash
 python train.py --config "configs/hifipln-finetune.yaml"
 ```
@@ -29,6 +37,7 @@ python train.py --config "configs/hifipln-finetune.yaml"
 ```bash
 python export.py --config configs/hifipln.yaml --output out/hifipln --model CKPT_PATH
 ```
+You may leave CKPT_PATH empty and it will find the last checkpoint of the last run
 
 # Credits
 * [DiffSinger](https://github.com/openvpi/DiffSinger)
