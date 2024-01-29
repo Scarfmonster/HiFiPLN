@@ -133,9 +133,10 @@ for base_dir in args.folders:
 
                 print("Saving split files...")
                 for i, segment in enumerate(combined_segments):
-                    target = path.join(
-                        args.output, f"{base_prefix}-{base_name}-{i:03d}.wav"
-                    )
+                    filename = f"{base_prefix}-{base_name}-{i:03d}.wav"
+                    if filename.startswith("-"):
+                        filename = filename[1:]
+                    target = path.join(args.output, filename)
                     segment = segment.set_frame_rate(args.sampling_rate).set_channels(1)
                     segment.export(target, format="wav")
 
