@@ -12,8 +12,9 @@ lr: 0.0004
 lr_decay: 0.99
 adam_b1: 0.8
 adam_b2: 0.99
-uv_detach_step: 50000
-uv_tolerance: 0.05
+uv_detach_step: Null
+uv_tolerance: 0.3
+use_discriminator: False
 dataset:
   train:
     path: "dataset/train"
@@ -44,8 +45,6 @@ dataloader:
     persistent_workers: True
 model:
   input_noise: 0.0
-model_ddsp:
-  use_discriminator: False
 mpd:
   periods:  [2, 3, 5, 7, 11]
   kernel_size: 5

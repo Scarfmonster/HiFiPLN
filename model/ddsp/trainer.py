@@ -22,9 +22,18 @@ class DDSPTrainer(pl.LightningModule):
         self.config = config
 
         self.generator = DDSP(config)
-        if self.config.model_ddsp.use_discriminator:
+        if self.config.use_discriminator:
             self.mpd = MultiPeriodDiscriminator(config)
             self.mrd = MultiResolutionDiscriminator(config)
+            self.spectogram_extractor = STFT(
+                sample_rate=config.sample_rate,
+                n_fft=config.n_fft,
+                win_length=config.win_length,
+                hop_length=config.hop_length,
+                f_min=config.f_min,
+                f_max=config.f_max,
+                n_mels=config.n_mels,
+            )
         else:
             self.ddsp_loss = RSSLoss(256, 2048, 4)
 
@@ -58,7 +67,7 @@ class DDSPTrainer(pl.LightningModule):
             optim_g, self.config.lr_decay
         )
 
-        if self.config.model_ddsp.use_discriminator:
+        if self.config.use_discriminator:
             optim_d = torch.optim.AdamW(
                 itertools.chain(self.mrd.parameters(), self.mpd.parameters()),
                 lr=self.config.lr,
@@ -76,33 +85,12 @@ class DDSPTrainer(pl.LightningModule):
             scheduler_g,
         ]
 
-    @staticmethod
-    def extract_envelope(signal, kernel_size=100, stride=50, padding=0):
-        envelope = F.max_pool1d(
-            signal, kernel_size=kernel_size, stride=stride, padding=padding
-        )
-        return envelope
-
-    @staticmethod
-    def envelope_loss(y, y_hat):
-        y_envelope = DDSPTrainer.extract_envelope(y)
-        y_hat_envelope = DDSPTrainer.extract_envelope(y_hat)
-
-        y_reverse_envelope = DDSPTrainer.extract_envelope(-y)
-        y_hat_reverse_envelope = DDSPTrainer.extract_envelope(-y_hat)
-
-        loss_envelope = F.l1_loss(y_envelope, y_hat_envelope) + F.l1_loss(
-            y_reverse_envelope, y_hat_reverse_envelope
-        )
-
-        return loss_envelope
-
     def get_mels(self, x):
         mels = self.spectogram_extractor.get_mel(x.squeeze(1))
         return mels
 
     def training_step(self, batch, batch_idx):
-        if self.config.model_ddsp.use_discriminator:
+        if self.config.use_discriminator:
             optim_g, optim_d = self.optimizers()
             current_step = self.global_step // 2
         else:
@@ -123,7 +111,7 @@ class DDSPTrainer(pl.LightningModule):
         # Generator
         optim_g.zero_grad(set_to_none=True)
 
-        if self.config.model_ddsp.use_discriminator:
+        if self.config.use_discriminator:
             real_mpd = self.mpd(audio)
             real_mrd = self.mrd(audio)
             gen_mpd = self.mpd(gen_audio)
@@ -144,7 +132,23 @@ class DDSPTrainer(pl.LightningModule):
                     score_fake, torch.ones_like(score_fake)
                 )
 
-            loss_gen = gen_loss + feat_loss
+            mel_lens = batch["audio_lens"] // self.config["hop_length"]
+            mels = self.get_mels(audio)[:, :, : mel_lens.max()]
+            gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
+
+            loss_mel = F.l1_loss(mels, gen_audio_mel)
+
+            loss_gen = gen_loss + feat_loss + loss_mel
+
+            self.log(
+                f"train/loss_mel",
+                loss_mel,
+                on_step=True,
+                on_epoch=False,
+                prog_bar=False,
+                logger=True,
+                batch_size=pitches.shape[0],
+            )
 
             self.log(
                 f"train/loss_gan",
@@ -168,10 +172,21 @@ class DDSPTrainer(pl.LightningModule):
 
         else:
             loss_gen = self.ddsp_loss(audio, gen_audio)
+            self.log(
+                f"train/loss_stft",
+                loss_gen,
+                on_step=True,
+                on_epoch=False,
+                prog_bar=False,
+                logger=True,
+                batch_size=pitches.shape[0],
+            )
 
         loss_uv = self.uv_loss(gen_audio, harmonic, 1 - vuv)
 
-        if current_step > self.config.get("uv_detach_step", 0):
+        if self.config.get(
+            "uv_detach_step", None
+        ) is not None and current_step > self.config.get("uv_detach_step", 0):
             loss_uv = loss_uv.detach()
 
         loss_gen = loss_gen + loss_uv
@@ -199,7 +214,7 @@ class DDSPTrainer(pl.LightningModule):
             batch_size=pitches.shape[0],
         )
 
-        if self.config.model_ddsp.use_discriminator:
+        if self.config.use_discriminator:
             # Discriminator Loss
             optim_d.zero_grad(set_to_none=True)
 
@@ -234,7 +249,7 @@ class DDSPTrainer(pl.LightningModule):
 
         if self.trainer.is_last_batch:
             # Manual LR Scheduler
-            if self.config.model_ddsp.use_discriminator:
+            if self.config.use_discriminator:
                 scheduler_g, scheduler_d = self.lr_schedulers()
                 scheduler_g.step()
                 scheduler_d.step()
@@ -243,7 +258,7 @@ class DDSPTrainer(pl.LightningModule):
                 scheduler_g.step()
 
     def validation_step(self, batch, batch_idx):
-        if self.config.model_ddsp.use_discriminator:
+        if self.config.use_discriminator:
             current_step = self.global_step // 2
         else:
             current_step = self.global_step
