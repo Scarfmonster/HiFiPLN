@@ -1,22 +1,11 @@
-import datetime
 from argparse import ArgumentParser
 from os import makedirs, path, sep, walk
 
 from pydub import AudioSegment, silence
-
-parser = ArgumentParser()
-parser.add_argument("--simple", action="store_true")
-parser.add_argument("--length", type=int, default=15)
-parser.add_argument("--min-length", type=int, default=1)
-parser.add_argument("-ms", "--min-silence", type=int, default=100)
-parser.add_argument("-st", "--silence-tresh", type=float, default=-40.0)
-parser.add_argument("-sr", "--sampling-rate", type=int, default=44100)
-parser.add_argument("--filter", type=str, default=None)
-parser.add_argument("-o", "--output", type=str, default="split")
-parser.add_argument("folders", nargs="+", type=str)
-args = parser.parse_args()
-total_length = 0.0
-total_segments = 0
+from multiprocessing import Pool, RLock, current_process, freeze_support
+from tqdm import tqdm
+from random import shuffle
+import numpy as np
 
 
 def split_segments(audio, length):
@@ -32,114 +21,88 @@ def split_segments(audio, length):
     return segments
 
 
-allow_filter = ()
-if args.filter is not None:
-    with open(args.filter, "r") as inf:
-        lines = [line.strip() for line in inf]
-        allow_filter = tuple(lines)
+def process_file(args, files):
+    pos = current_process()._identity[0] - 1
+    for root, base_prefix, f in tqdm(files, position=pos, desc=f"Split #{pos}"):
+        base_name = path.splitext(f)[0]
+        audiofile = path.join(root, f)
 
-for base_dir in args.folders:
-    for root, _, files in walk(base_dir):
-        root_list = root.split(sep)
-        if (
-            len(root_list) >= 2
-            and len(allow_filter) > 0
-            and root_list[1] not in allow_filter
-        ):
+        if path.exists(path.join(args.output, f"{base_prefix}-{base_name}-000.wav")):
             continue
-        if len(args.folders) == 1:
-            root_list = root_list[1:]
-        base_prefix = "-".join(root_list)
-        for f in files:
-            if f.lower().endswith((".wav", ".mp3")):
-                base_name = path.splitext(f)[0]
-                audiofile = path.join(root, f)
-                makedirs(args.output, exist_ok=True)
-                print("Processing {}...".format(audiofile))
-                if path.exists(
-                    path.join(args.output, f"{base_prefix}-{base_name}-000.wav")
-                ):
-                    print("Already processed, skipping...")
-                    continue
 
-                _, extension = path.splitext(f.lower())
-                if extension == ".mp3":
-                    allaudio = AudioSegment.from_file(audiofile, format="mp3")
-                else:
-                    allaudio = AudioSegment.from_file(audiofile, format="wav")
+        _, extension = path.splitext(f.lower())
+        if extension == ".mp3":
+            allaudio = AudioSegment.from_file(audiofile, format="mp3")
+        else:
+            allaudio = AudioSegment.from_file(audiofile, format="wav")
 
-                if len(allaudio) < args.min_length * 1000:
-                    continue
+        if len(allaudio) < args.length * 1000:
+            continue
 
-                trimaudio = silence.split_on_silence(
-                    allaudio,
-                    min_silence_len=300,
-                    silence_thresh=args.silence_tresh,
-                    keep_silence=300,
-                    seek_step=5,
-                )
+        trimaudio = silence.split_on_silence(
+            allaudio,
+            min_silence_len=args.min_silence,
+            silence_thresh=args.silence_tresh,
+            keep_silence=300,
+            seek_step=5,
+        )
 
-                trimaudio = sum(trimaudio, start=AudioSegment.empty())
+        trimaudio = sum(trimaudio, start=AudioSegment.empty())
 
-                print(f"Trimmed {(len(allaudio)-len(trimaudio))/ 1000.0}s...")
+        combined_segments = split_segments(trimaudio, args.length)
 
-                if args.simple:
-                    combined_segments = split_segments(trimaudio, args.length)
+        for i, segment in enumerate(combined_segments):
+            filename = f"{base_prefix}-{base_name}-{i:03d}.wav"
+            if filename.startswith("-"):
+                filename = filename[1:]
+            target = path.join(args.output, filename)
+            segment = segment.set_frame_rate(args.sampling_rate).set_channels(1)
+            segment.export(target, format="wav")
 
-                else:
-                    print("Detecting silences...")
-                    segments = silence.split_on_silence(
-                        trimaudio,
-                        min_silence_len=args.min_silence,
-                        silence_thresh=args.silence_tresh,
-                        keep_silence=True,
-                    )
 
-                    print("Combining segments...")
-                    combined_segments = []
-                    current_segment = None
-                    for segment in segments:
-                        if current_segment and (
-                            (len(current_segment) + len(segment) <= args.length * 1000)
-                            or (len(current_segment) < args.min_length * 1000)
-                        ):
-                            current_segment += segment
-                        else:
-                            if current_segment:
-                                current_length = len(current_segment)
-                                if current_length < args.min_length * 1000:
-                                    current_segment = None
-                                    continue
-                                combined_segments.append(current_segment)
-                                total_length += current_length
-                                current_segment = None
-                            current_segment = segment
+if __name__ == "__main__":
+    freeze_support()
 
-                    # Add the last segment
-                    if current_segment:
-                        combined_segments.append(current_segment)
+    parser = ArgumentParser()
+    parser.add_argument("--length", type=int, default=15)
+    parser.add_argument("-ms", "--min-silence", type=int, default=300)
+    parser.add_argument("-st", "--silence-tresh", type=float, default=-40.0)
+    parser.add_argument("-sr", "--sampling-rate", type=int, default=44100)
+    parser.add_argument("--filter", type=str, default=None)
+    parser.add_argument("-o", "--output", type=str, default="split")
+    parser.add_argument("-t", "--threads", type=int, default=8)
+    parser.add_argument("folders", nargs="+", type=str)
+    args = parser.parse_args()
 
-                tmp_segments = []
+    allow_filter = ()
+    if args.filter is not None:
+        with open(args.filter, "r") as inf:
+            lines = [line.strip() for line in inf]
+            allow_filter = tuple(lines)
 
-                for segment in combined_segments:
-                    if len(segment) >= args.min_length * 1000:
-                        tmp_segments.append(segment)
-                        total_length += len(segment)
+    for base_dir in args.folders:
+        audio_files = []
+        for root, _, files in walk(base_dir):
+            root_list = root.split(sep)
+            if (
+                len(root_list) >= 2
+                and len(allow_filter) > 0
+                and root_list[1] not in allow_filter
+            ):
+                continue
+            if len(args.folders) == 1:
+                root_list = root_list[1:]
+            base_prefix = "-".join(root_list)
+            makedirs(args.output, exist_ok=True)
 
-                combined_segments = tmp_segments
+            for f in files:
+                if f.lower().endswith((".wav", ".mp3")):
+                    audio_files.append((root, base_prefix, f))
 
-                print(f"Got {len(combined_segments)} segments...")
-                total_segments += len(combined_segments)
+        shuffle(audio_files)
 
-                print("Saving split files...")
-                for i, segment in enumerate(combined_segments):
-                    filename = f"{base_prefix}-{base_name}-{i:03d}.wav"
-                    if filename.startswith("-"):
-                        filename = filename[1:]
-                    target = path.join(args.output, filename)
-                    segment = segment.set_frame_rate(args.sampling_rate).set_channels(1)
-                    segment.export(target, format="wav")
+        splits = np.array_split(np.array(audio_files), args.threads)
+        splits = [(args, files) for files in splits]
 
-len_dataset = datetime.timedelta(seconds=round(total_length / 1000.0))
-print(f"Total length: {len_dataset}")
-print(f"Total segments: {total_segments}")
+        with Pool(args.threads, initializer=tqdm.set_lock, initargs=(RLock(),)) as pool:
+            pool.starmap(process_file, splits)
