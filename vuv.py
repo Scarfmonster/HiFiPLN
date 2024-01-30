@@ -18,9 +18,6 @@ class VUVEstimator:
         self.vuv_smoothing = config.preprocessing.vuv_smoothing
 
     def get_vuv(self, audio, f0):
-        audio = highpass_biquad(audio, self.sample_rate, self.f0_min)
-        # audio = lowpass_biquad(audio, self.sample_rate, self.f_max)
-
         ap = self.get_world(audio, f0)
         ap = ap[:, 0]
 
