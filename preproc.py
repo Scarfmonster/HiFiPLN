@@ -39,16 +39,17 @@ def process(
     if config.preprocessing.vuv:
         vuv = vuv_extractor.get_vuv(audio, f0_0)
         data["vuv"] = vuv
-        if config.preprocessing.oversampling > 1:
-            f0 = np.interp(
-                np.linspace(
-                    np.min(f0),
-                    np.max(f0),
-                    len(f0) // config.preprocessing.oversampling,
-                ),
-                np.linspace(np.min(f0), np.max(f0), len(f0)),
-                f0,
-            )
+
+    if config.preprocessing.oversampling > 1:
+        f0 = np.interp(
+            np.linspace(
+                np.min(f0),
+                np.max(f0),
+                len(f0) // config.preprocessing.oversampling,
+            ),
+            np.linspace(np.min(f0), np.max(f0), len(f0)),
+            f0,
+        )
 
     data["pitch"] = f0
 
@@ -69,9 +70,11 @@ def run(config, files):
 
     if config.preprocessing.vuv:
         vuv_extractor = VUVEstimator(config)
-        hop_length = hop_length // config.preprocessing.oversampling
     else:
         vuv_extractor = None
+
+    if config.preprocessing.oversampling > 1:
+        hop_length = hop_length // config.preprocessing.oversampling
 
     pitch_extractor_cls = getattr(
         __import__("pitch", fromlist=[config.preprocessing.pitch_extractor.name]),
