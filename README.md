@@ -3,7 +3,7 @@
 
 This is the code used to train the "HiFiPLN" vocoder.
 
-Pretrained model is available for download on the official [release page](https://utau.pl/hifipln/).
+A trained model for use with OpenUtau is available for download on the official [release page](https://utau.pl/hifipln/).
 
 ## Why HiFiPLN?
 Because a lot of PLN was spent training this thing.
@@ -12,7 +12,7 @@ Because a lot of PLN was spent training this thing.
 ### Data preparation
 
 ```bash
-python dataset-utils/split.py --length 2 --simple -sr 44100 -o "dataset/train" PATH_TO_DATASET
+python dataset-utils/split.py --length 1 -sr 44100 -o "dataset/train" PATH_TO_DATASET
 python preproc.py --path dataset --config "configs/hifipln.yaml"
 ```
 
@@ -25,7 +25,7 @@ python train.py --config "configs/hifipln.yaml"
 ```bash
 python train.py --config "configs/hifipln.yaml" --resume CKPT_PATH
 ```
-You may leave CKPT_PATH empty and it will find the last checkpoint of the last run
+You may set CKPT_PATH to a log directory (eg. logs/HiFiPLN), and it will find the last checkpoint of the last run.
 
 ### Finetuning
 Save the base checkpoint as ckpt/HiFiPLN.ckpt then run:
@@ -37,7 +37,7 @@ python train.py --config "configs/hifipln-finetune.yaml"
 ```bash
 python export.py --config configs/hifipln.yaml --output out/hifipln --model CKPT_PATH
 ```
-You may leave CKPT_PATH empty and it will find the last checkpoint of the last run
+You may set CKPT_PATH to a log directory (eg. logs/HiFiPLN), and it will find the last checkpoint of the last run.
 
 # Credits
 * [DiffSinger](https://github.com/openvpi/DiffSinger)
