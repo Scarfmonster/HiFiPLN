@@ -71,5 +71,5 @@ preprocessing:
     name: "ParselmouthPE"
     keep_zeros: False
   vuv: True
-  vuv_smoothing: 5
-  oversampling: 2
+  vuv_smoothing: 2
+  oversampling: 1
