@@ -9,10 +9,15 @@ A trained model for use with OpenUtau is available for download on the official 
 Because a lot of PLN was spent training this thing.
 
 ## Training
-### Data preparation
+### Python
+Python 3.10 or greater is required.
 
+### Data preparation
 ```bash
 python dataset-utils/split.py --length 1 -sr 44100 -o "dataset/train" PATH_TO_DATASET
+```
+You will also need to provide some validation audio files and save them to `dataset/valid` and then run:
+```bash
 python preproc.py --path dataset --config "configs/hifipln.yaml"
 ```
 
@@ -20,6 +25,7 @@ python preproc.py --path dataset --config "configs/hifipln.yaml"
 ```bash
 python train.py --config "configs/hifipln.yaml"
 ```
+If you see an error saying "Total length of \`Data Loader\` across ranks is zero" then you do not have enough validation files.
 
 ### Resume 
 ```bash
