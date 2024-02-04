@@ -83,7 +83,7 @@ if __name__ == "__main__":
     for base_dir in args.folders:
         audio_files = []
         for root, _, files in walk(base_dir):
-            root_list = root.split(sep)
+            root_list = root[len(base_dir) :].split(sep)
             if (
                 len(root_list) >= 2
                 and len(allow_filter) > 0
