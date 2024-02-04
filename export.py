@@ -152,8 +152,8 @@ def main(input_file, output_path, config, best=False, dynamo=False):
         model = ExportableDDSP(config, input_file)
     print("Model loaded")
 
-    mel = torch.randn(1, 64, 128)
-    f0 = torch.randn(1, 64)
+    mel = torch.randn(1, 10, 128)
+    f0 = torch.randn(1, 10)
 
     if not dynamo:
         torch.onnx.export(
@@ -164,9 +164,9 @@ def main(input_file, output_path, config, best=False, dynamo=False):
             output_names=["waveform"],
             opset_version=17,
             dynamic_axes={
-                "mel": {0: "batch", 1: "n_frames"},
-                "f0": {0: "batch", 1: "n_frames"},
-                "waveform": {0: "batch", 1: "wave_length"},
+                "mel": {1: "n_frames"},
+                "f0": {1: "n_frames"},
+                "waveform": {1: "wave_length"},
             },
             training=torch.onnx.TrainingMode.EVAL,
         )
