@@ -62,6 +62,7 @@ class ExportableHiFiPLN(torch.nn.Module):
         mel = mel.transpose(-1, -2)
         f0 = f0.unsqueeze(1)
         wav, (src_harmonic, src_noise) = self.model(mel, f0)
+        wav = wav.squeeze(1)
 
         return wav
 
@@ -91,6 +92,7 @@ class ExportableDDSP(torch.nn.Module):
     def forward(self, mel: torch.FloatTensor, f0: torch.FloatTensor):
         mel = mel.transpose(-1, -2)
         wav = self.model(mel, f0)
+        wav = wav.squeeze(1)
 
         return wav
 
