@@ -35,7 +35,8 @@ python train.py --config "configs/hifipln.yaml" --resume CKPT_PATH
 You may set CKPT_PATH to a log directory (eg. logs/HiFiPLN), and it will find the last checkpoint of the last run.
 
 ### Finetuning
-Save the base checkpoint as ckpt/HiFiPLN.ckpt then run:
+Download a checkpoint from https://utau.pl/hifipln/#checkpoints-for-finetuning \
+Save the checkpoint as ckpt/HiFiPLN.ckpt then run:
 ```bash
 python train.py --config "configs/hifipln-finetune.yaml"
 ```
