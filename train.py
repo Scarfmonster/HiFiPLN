@@ -56,6 +56,16 @@ if __name__ == "__main__":
 
     config = OmegaConf.load(args.config)
 
+    # Check if there are enough validation files in dataset/valid
+    validation_files = len(
+        [f for f in os.listdir(config.dataset.valid.path) if f.endswith(".npy")]
+    )
+    if validation_files < config.dataloader.valid.batch_size:
+        print(
+            f"Not enough validation files. Please add at least {config.dataloader.valid.batch_size} files to dataset/valid and run preprocessing."
+        )
+        exit(1)
+
     if config.precision.startswith("bf16"):
 
         def stft(
