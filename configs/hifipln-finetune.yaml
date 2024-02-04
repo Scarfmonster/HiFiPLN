@@ -8,7 +8,7 @@ n_mels: 128
 hop_length: 512
 win_length: 2048
 n_fft: 2048
-lr: 0.000001
+lr: 0.00001
 lr_decay: 0.995
 adam_b1: 0.8
 adam_b2: 0.99
