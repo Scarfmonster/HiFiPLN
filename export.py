@@ -166,7 +166,7 @@ def main(input_file, output_path, config, best=False, dynamo=False):
             dynamic_axes={
                 "mel": {0: "batch", 1: "n_frames"},
                 "f0": {0: "batch", 1: "n_frames"},
-                "waveform": {0: "batch", 2: "wave_length"},
+                "waveform": {0: "batch", 1: "wave_length"},
             },
             training=torch.onnx.TrainingMode.EVAL,
         )
