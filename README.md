@@ -25,7 +25,8 @@ python preproc.py --path dataset --config "configs/hifipln.yaml"
 ```bash
 python train.py --config "configs/hifipln.yaml"
 ```
-If you see an error saying "Total length of \`Data Loader\` across ranks is zero" then you do not have enough validation files.
+* If you see an error saying "Total length of \`Data Loader\` across ranks is zero" then you do not have enough validation files.
+* You may want to edit `configs/hifipln.yaml` and change `train: batch_size: 12` to a value that better fits your available VRAM.
 
 ### Resume 
 ```bash
@@ -38,6 +39,7 @@ Save the base checkpoint as ckpt/HiFiPLN.ckpt then run:
 ```bash
 python train.py --config "configs/hifipln-finetune.yaml"
 ```
+* Finetuning shouldn't be run for too long, especially for small datasets. Just 2-3 epochs or ~20000 steps should be fine.
 
 ## Exporting for use in OpenUtau
 ```bash
