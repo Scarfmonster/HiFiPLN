@@ -1,10 +1,14 @@
+einops==0.7.0
 librosa==0.10.1
 lightning==2.1.0
 matplotlib==3.8.2
 omegaconf==2.3.0
 onnx
+onnxruntime-gpu
 onnxscript
+praat-parselmouth==0.4.3
 pydub==0.25.1
+pyworld==0.3.4
 soundfile==0.12.1
 tensorboard
 torch
