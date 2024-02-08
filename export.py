@@ -91,7 +91,7 @@ class ExportableDDSP(torch.nn.Module):
 
     def forward(self, mel: torch.FloatTensor, f0: torch.FloatTensor):
         mel = mel.transpose(-1, -2)
-        wav = self.model(mel, f0)
+        wav, (_, _) = self.model(mel, f0)
         wav = wav.squeeze(1)
 
         return wav
