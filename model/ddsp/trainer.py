@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 
-from model.hifipln.discriminator import (
+from model.hifiplnv1.discriminator import (
     MultiPeriodDiscriminator,
     MultiResolutionDiscriminator,
 )

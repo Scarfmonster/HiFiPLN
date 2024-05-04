@@ -136,8 +136,8 @@ if __name__ == "__main__":
             from model.hifigan.trainer import HiFiGanTrainer
 
             model = HiFiGanTrainer(config)
-        case "HiFiPLN":
-            from model.hifipln.trainer import HiFiPlnTrainer
+        case "HiFiPLNv1":
+            from model.hifiplnv1.trainer import HiFiPlnTrainer
 
             model = HiFiPlnTrainer(config)
         case "DDSP":

@@ -15,7 +15,7 @@ from ..utils import init_weights
 from .encoder import PreEncoder
 
 
-class HiFiPLN(nn.Module):
+class HiFiPLNv1(nn.Module):
     def __init__(self, config: DictConfig):
         super().__init__()
         self.n_mels = config.n_mels

@@ -9,13 +9,13 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 
 from model.ddsp.loss import MSSLoss, UVLoss
-from model.hifipln.discriminator import (
+from model.hifiplnv1.discriminator import (
     MultiPeriodDiscriminator,
     MultiResolutionDiscriminator,
 )
 
 from ..utils import STFT, plot_mel, plot_snakes
-from .generator import HiFiPLN
+from .generator import HiFiPLNv1
 
 
 class HiFiPlnTrainer(pl.LightningModule):
@@ -23,7 +23,7 @@ class HiFiPlnTrainer(pl.LightningModule):
         super().__init__()
         self.config = config
 
-        self.generator = HiFiPLN(config)
+        self.generator = HiFiPLNv1(config)
         self.mpd = MultiPeriodDiscriminator(config)
         self.mrd = MultiResolutionDiscriminator(config)
 

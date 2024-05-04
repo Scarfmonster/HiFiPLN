@@ -1,4 +1,4 @@
-type: "HiFiPLN"
+type: "HiFiPLNv1"
 precision: "32"
 val_check: 500
 sample_rate: 44100

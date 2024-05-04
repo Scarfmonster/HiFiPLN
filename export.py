@@ -10,9 +10,6 @@ from omegaconf import DictConfig, OmegaConf
 from onnxscript.onnx_opset import opset17 as op
 from torch.onnx._internal import jit_utils
 
-from model.ddsp.generator import DDSP
-from model.hifipln.generator import HiFiPLN
-
 custom_opset = onnxscript.values.Opset(domain="onnx-script", version=1)
 
 
@@ -37,9 +34,9 @@ torch.onnx.register_custom_op_symbolic(
 
 
 class ExportableHiFiPLN(torch.nn.Module):
-    def __init__(self, config: DictConfig, ckpt_path):
+    def __init__(self, config: DictConfig, ckpt_path, model):
         super().__init__()
-        self.model = HiFiPLN(config)
+        self.model = model(config)
 
         if ckpt_path is not None:
             cp_dict = torch.load(ckpt_path, map_location="cpu")
@@ -61,16 +58,17 @@ class ExportableHiFiPLN(torch.nn.Module):
     def forward(self, mel: torch.FloatTensor, f0: torch.FloatTensor):
         mel = mel.transpose(-1, -2)
         f0 = f0.unsqueeze(1)
-        wav, (src_harmonic, src_noise) = self.model(mel, f0)
+        wav, (_, _) = self.model(mel, f0)
         wav = wav.squeeze(1)
+        wav = torch.clamp(wav, -1, 1)
 
         return wav
 
 
 class ExportableDDSP(torch.nn.Module):
-    def __init__(self, config: DictConfig, ckpt_path):
+    def __init__(self, config: DictConfig, ckpt_path, model):
         super().__init__()
-        self.model = DDSP(config)
+        self.model = model(config)
 
         if ckpt_path is not None:
             cp_dict = torch.load(ckpt_path, map_location="cpu")
@@ -93,6 +91,7 @@ class ExportableDDSP(torch.nn.Module):
         mel = mel.transpose(-1, -2)
         wav, (_, _) = self.model(mel, f0)
         wav = wav.squeeze(1)
+        wav = torch.clamp(wav, -1, 1)
 
         return wav
 
@@ -146,10 +145,15 @@ def main(input_file, output_path, config, best=False, dynamo=False):
 
     # Export ONNX
     print(f"Exporting ONNX")
-    if config.type == "HiFiPLN":
-        model = ExportableHiFiPLN(config, input_file)
-    else:
-        model = ExportableDDSP(config, input_file)
+    match config.type:
+        case "HiFiPLNv1":
+            from model.hifiplnv1.generator import HiFiPLNv1
+
+            model = ExportableHiFiPLN(config, input_file, HiFiPLNv1)
+        case "DDSP":
+            from model.ddsp.generator import DDSP
+
+            model = ExportableDDSP(config, DDSP)
     print("Model loaded")
 
     mel = torch.randn(1, 10, 128)
