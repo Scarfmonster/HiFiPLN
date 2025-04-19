@@ -22,12 +22,14 @@ dataset:
     segment_length: 16384
     pitch_shift: [-12, 12]
     loudness_shift: [0.25, 1.0]
+    reverse_prob: Null
     return_vuv: True
   valid:
     path: "dataset/valid"
     segment_length: Null
     pitch_shift: Null
     loudness_shift: Null
+    reverse_prob: Null
     return_vuv: True
 dataloader:
   train:

@@ -1,198 +1,141 @@
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn.utils.parametrizations import weight_norm
-
-from alias.resample import DownSample1d, UpSample1d
-from model.utils import get_padding, init_weights
-
-
-class ResBlock(nn.Module):
-    def __init__(
-        self,
-        channels: int,
-        kernel_size: int = 3,
-        dilation: tuple[int] = (1, 3, 5),
-        lrelu_slope: float = 0.1,
-    ):
-        super().__init__()
-
-        self.lrelu_slope = lrelu_slope
-
-        self.convs1 = nn.ModuleList(
-            [
-                weight_norm(
-                    nn.Conv1d(
-                        in_channels=channels,
-                        out_channels=channels,
-                        kernel_size=kernel_size,
-                        dilation=d,
-                        padding=get_padding(kernel_size, d),
-                    )
-                )
-                for d in dilation
-            ]
-        )
-        self.convs1.apply(init_weights)
-        self.convs2 = nn.ModuleList(
-            [
-                weight_norm(
-                    nn.Conv1d(
-                        in_channels=channels,
-                        out_channels=channels,
-                        kernel_size=kernel_size,
-                        dilation=1,
-                        padding=get_padding(kernel_size, 1),
-                    )
-                )
-                for d in dilation
-            ]
-        )
-        self.convs2.apply(init_weights)
-
-    def forward(self, x):
-        for c1, c2 in zip(self.convs1, self.convs2):
-            x2 = F.gelu(x)
-            x2 = c1(x2)
-            x2 = F.gelu(x2)
-            x2 = c2(x2)
-            x = x + x2
-        return x
-
-
-class SnakeBlock(nn.Module):
-    def __init__(
-        self,
-        channels: int,
-        kernel_size: int = 3,
-        dilation: tuple[int] = (1, 3, 5),
-        snake_log: bool = False,
-        upsample: bool = True,
-    ):
-        super().__init__()
-
-        self.dilations = len(dilation)
-
-        self.convs1 = nn.ModuleList(
-            [
-                weight_norm(
-                    nn.Conv1d(
-                        in_channels=channels,
-                        out_channels=channels,
-                        kernel_size=kernel_size,
-                        dilation=d,
-                        padding=get_padding(kernel_size, d),
-                    )
-                )
-                for d in dilation
-            ]
-        )
-        self.convs1.apply(init_weights)
-        self.convs2 = nn.ModuleList(
-            [
-                weight_norm(
-                    nn.Conv1d(
-                        in_channels=channels,
-                        out_channels=channels,
-                        kernel_size=kernel_size,
-                        dilation=1,
-                        padding=get_padding(kernel_size, 1),
-                    )
-                )
-                for d in dilation
-            ]
-        )
-        self.convs2.apply(init_weights)
-
-        self.snakes = nn.ModuleList()
-        for _ in range(len(dilation) * 2):
-            self.snakes.append(SnakeGamma(channels, logscale=snake_log))
-
-        if upsample:
-            self.upsample = UpSample1d(channels, 2)
-            self.downsample = DownSample1d(channels, 2)
-        else:
-            self.upsample = nn.Identity()
-            self.downsample = nn.Identity()
-
-    def forward(self, x):
-        for i in range(self.dilations):
-            xn = self.upsample(x)
-            xn = self.snakes[2 * i](xn)
-            xn = self.downsample(xn)
-            xn = self.convs1[i](xn)
-            xn = self.snakes[2 * i + 1](xn)
-            xn = self.convs2[i](xn)
-
-            x = x + xn
-        return x
-
-
-class SnakeBeta(nn.Module):
-    def __init__(self, in_features, alpha=1.0, logscale=False):
-        super().__init__()
-        self.in_features = in_features
-
-        if logscale:
-            beta = torch.log(torch.normal(alpha, 0.1, size=(in_features,)))
-            alpha = torch.log(torch.normal(alpha, 0.2, size=(in_features,)))
-
-            self.alpha = nn.Parameter(torch.zeros(in_features) + alpha)
-            self.beta = nn.Parameter(torch.zeros(in_features) + beta)
-            self.exp = Exp()
-        else:
-            self.alpha = nn.Parameter(torch.normal(alpha, 0.2, size=(in_features,)))
-            self.beta = nn.Parameter(torch.normal(alpha, 0.1, size=(in_features,)))
-            self.exp = nn.Identity()
-
-    def forward(self, x):
-        alpha = self.alpha.unsqueeze(0).unsqueeze(-1)  # line up with x to [B, C, T]
-        beta = self.beta.unsqueeze(0).unsqueeze(-1)
-
-        alpha = self.exp(alpha)
-        beta = self.exp(beta)
-
-        x = x + (1.0 / (beta + 1e-8)) * torch.pow(torch.sin(x * alpha), 2)
-
-        return x
-
-
-class SnakeGamma(nn.Module):
-    def __init__(self, in_features, alpha=1.0, logscale=False):
-        super().__init__()
-        self.in_features = in_features
-
-        if logscale:
-            beta = torch.log(torch.normal(alpha, 0.1, size=(in_features,)))
-            alpha = torch.log(torch.normal(alpha, 0.2, size=(in_features,)))
-
-            self.alpha = nn.Parameter(torch.zeros(in_features) + alpha)
-            self.beta = nn.Parameter(torch.zeros(in_features) + beta)
-            self.exp = Exp()
-        else:
-            self.alpha = nn.Parameter(torch.normal(alpha, 0.2, size=(in_features,)))
-            self.beta = nn.Parameter(torch.normal(alpha, 0.1, size=(in_features,)))
-            self.exp = nn.Identity()
-
-        self.gamma = nn.Parameter(torch.ones(in_features))
-
-    def forward(self, x):
-        alpha = self.alpha.unsqueeze(0).unsqueeze(-1)  # line up with x to [B, C, T]
-        beta = self.beta.unsqueeze(0).unsqueeze(-1)
-        gamma = self.gamma.unsqueeze(0).unsqueeze(-1)
-
-        alpha = self.exp(alpha)
-        beta = self.exp(beta)
-
-        x = x * gamma + (1.0 / (beta + 1e-8)) * torch.pow(torch.sin(x * alpha), 2)
-
-        return x
 
 
 class Exp(nn.Module):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.exp(x)
+
+
+def f0_to_phase(f0: torch.Tensor, sample_rate: int) -> torch.Tensor:
+    phase = torch.cumsum(f0.double() / sample_rate, dim=1)
+    phase -= torch.round(phase)
+    phase = phase.to(dtype=f0.dtype)
+
+    return phase
+
+
+def normalize(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+    return (x - mean) / std
+
+
+def remove_above_fmax(
+    amplitudes: torch.Tensor,
+    pitch: torch.Tensor,
+    fmax: float,
+    level_start: int = 1,
+) -> torch.Tensor:
+    amplitudes = amplitudes.transpose(1, 2)
+    pitch = pitch.transpose(1, 2)
+    n_harm = amplitudes.shape[-1]
+    pitches = pitch * torch.arange(level_start, n_harm + level_start).to(pitch)
+    aa = (pitches < fmax).float() + 1e-7
+    amplitudes = amplitudes * aa
+    return amplitudes.transpose(1, 2)
+
+
+def leaky_clamp(x: torch.Tensor, slope: float = 0.01) -> torch.Tensor:
+    x = torch.where(x < 0.0, x * slope, x)
+    x = torch.where(x >= 1.0, 1.0 - slope + x * slope, x)
+
+    return x
+
+
+def noise_dropout(
+    mels: torch.Tensor,
+    noise: float,
+    dropout: float,
+    mel_mean: torch.Tensor | None = None,
+    mel_std: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if noise == 0.0 and dropout == 0.0:
+        return mels
+    mels = mels.clone()
+
+    if noise > 0.0:
+        if mel_mean is None or mel_std is None:
+            std, mean = torch.std_mean(mels, dim=-1, keepdim=True)
+        else:
+            std, mean = mel_std, mel_mean
+            std = std.expand_as(mels)
+            mean = mean.expand_as(mels)
+        noise_scale = (
+            torch.rand(mels.shape[0], 1, 1, device=mels.device, dtype=mels.dtype)
+            * noise
+        )
+        mels += torch.normal(mean, std) * noise_scale
+
+    if dropout > 0.0:
+        for b in range(mels.shape[0]):
+            if dropout > torch.rand(1):
+                # Drop a random spectogram row
+                row = torch.randint(0, mels.shape[1], (1,))
+                mels[b, row, :] = 0
+
+    return mels
+
+
+def atan2(y, x):
+    # Create a pi tensor with the same device and data type as y
+    pi = torch.tensor(torch.pi, device=y.device, dtype=y.dtype)
+    half_pi = pi / 2
+    eps = 1e-7
+
+    x += -0.0
+    y += -0.0
+
+    near_zeros = x.abs() < eps
+    x = x * (near_zeros.logical_not())
+    x = x + (near_zeros * x.sign() * eps)
+
+    # Compute the arctangent of y/x
+    ans = y / x
+    a = torch.where(ans > 1, 1 / ans, ans)
+    a = torch.where(ans < -1, 1 / a, a)
+    aa = a * a
+    r = 0.0
+    r = r * aa + 0.00289394245323327
+    r = r * aa - 0.0162911733512761
+    r = r * aa + 0.0431408641542157
+    r = r * aa - 0.0755120841589429
+    r = r * aa + 0.10668127080775
+    r = r * aa - 0.142123340834229
+    r = r * aa + 0.199940412794435
+    r = r * aa - 0.333331728467737
+    r = r * aa + 1.0
+    a = r * a
+    a = torch.where(ans > 1, half_pi - a, a)
+    a = torch.where(ans < -1, -half_pi - a, a)
+    ans = a
+
+    # Create boolean tensors representing positive, negative, and zero values of y and x
+    y_positive = y > 0
+    y_negative = y < 0
+    x_positive = x >= 0
+    x_negative = x < 0
+    x_zero = x.abs() < eps
+    y_zero = y.abs() < eps
+
+    zeros = torch.zeros_like(ans)
+
+    # Adjust ans based on the positive, negative, and zero values of y and x
+    ans += torch.where(y_positive & x_negative, pi, zeros)  # Quadrants I and II
+    ans -= torch.where(y_negative & x_negative, pi, zeros)  # Quadrants III and IV
+    ans = torch.where(y_positive & x_zero, half_pi, ans)  # Positive y-axis
+    ans = torch.where(y_negative & x_zero, -half_pi, ans)  # Negative y-axis
+    ans = torch.where(y_zero & x_negative, pi, ans)
+    ans = torch.where(y_zero & x_positive, zeros, ans)
+
+    ans = torch.nan_to_num(ans, nan=0.0, posinf=torch.pi, neginf=-torch.pi)
+
+    return ans
+
+
+def sinc(x: torch.Tensor) -> torch.Tensor:
+    piX = torch.pi * x
+    return torch.where(
+        x == 0, torch.tensor(1, device=x.device, dtype=x.dtype), torch.sin(piX) / piX
+    )

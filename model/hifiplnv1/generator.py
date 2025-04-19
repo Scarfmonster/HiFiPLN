@@ -8,7 +8,8 @@ from torch.nn.utils.parametrize import is_parametrized, remove_parametrizations
 
 from alias.act import Activation1d
 from alias.resample import DownSample1d
-from model.common import SnakeBlock, SnakeGamma
+from model.act import SnakeGamma
+from model.layers import SnakeBlock
 
 from ..ddsp.generator import DDSP
 from ..utils import init_weights
@@ -16,7 +17,7 @@ from .encoder import PreEncoder
 
 
 class HiFiPLNv1(nn.Module):
-    def __init__(self, config: DictConfig):
+    def __init__(self, config: DictConfig, export: bool = False):
         super().__init__()
         self.n_mels = config.n_mels
         self.upsample_initial = config.model.upsample_initial

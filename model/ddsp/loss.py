@@ -24,8 +24,11 @@ class SSSLoss(nn.Module):
         )
 
     def forward(self, x_true, x_pred):
-        x_true = x_true.squeeze(-2)
-        x_pred = x_pred.squeeze(-2)
+        if x_true.ndim == 3:
+            x_true = x_true.squeeze(-2)
+        if x_pred.ndim == 3:
+            x_pred = x_pred.squeeze(-2)
+
         S_true = self.spec(x_true) + self.eps
         S_pred = self.spec(x_pred) + self.eps
 

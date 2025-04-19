@@ -1,23 +1,48 @@
+from collections import deque
+from typing import Callable
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from librosa.filters import mel as librosa_mel_fn
-from torchaudio.transforms import MelSpectrogram
+from torch.nn import Module
+from torch.nn.utils.parametrizations import spectral_norm, weight_norm
 from torch.nn.utils.parametrize import is_parametrized
+from torchaudio.transforms import MelSpectrogram
 
 
 def plot_mel(data, titles=None):
     plt.switch_backend("agg")
     fig, axes = plt.subplots(len(data), 1, squeeze=False)
+    fig.set_figwidth(12)
+    fig.set_figheight(2.5 * len(data))
     if titles is None:
         titles = [None for i in range(len(data))]
     plt.tight_layout()
+
+    # Make sure that all mels are displayed with the same scale
+    v_min = np.log(1e-5)
+    v_max = np.log(1e-5)
+    for i in range(len(data)):
+        mel = data[i]
+        if isinstance(mel, torch.Tensor):
+            mel = mel.detach().cpu().numpy()
+        m = np.max(mel)
+        if m > v_max:
+            v_max = m
 
     for i in range(len(data)):
         mel = data[i]
         if isinstance(mel, torch.Tensor):
             mel = mel.detach().cpu().numpy()
-        axes[i][0].imshow(mel, origin="lower")
+        axes[i][0].imshow(
+            mel,
+            origin="lower",
+            vmin=v_min,
+            vmax=v_max,
+            interpolation="bilinear",
+            interpolation_stage="rgba",
+        )
         axes[i][0].set_aspect(2.5, adjustable="box")
         axes[i][0].set_ylim(0, mel.shape[0])
         axes[i][0].set_title(titles[i], fontsize="medium")
@@ -86,24 +111,36 @@ def get_mel_transform(
     return transform
 
 
-def plot_snakes(model: torch.nn.Module, logscale=False):
+def plot_snakes(model: torch.nn.Module, logscale=False) -> None | plt.Figure:
     alphas = []
     betas = []
     gammas = []
     for layer in model.modules():
         classname = layer.__class__.__name__
-        if classname in ("Snake", "SnakeBeta", "SnakeGamma"):
+        if classname in ("Snake", "SnakeBeta", "SnakeGamma", "ReSnake"):
             alphas.append(layer.alpha.detach().cpu().numpy())
             if hasattr(layer, "beta"):
                 betas.append(layer.beta.detach().cpu().numpy())
             if hasattr(layer, "gamma"):
                 gammas.append(layer.gamma.detach().cpu().numpy())
 
+    if len(alphas) == 0 and len(betas) == 0 and len(gammas) == 0:
+        return None
+
     if logscale:
         for i in range(len(alphas)):
             alphas[i] = np.exp(alphas[i])
         for i in range(len(betas)):
             betas[i] = np.exp(betas[i])
+        for i in range(len(gammas)):
+            gammas[i] = np.exp(gammas[i])
+    else:
+        for i in range(len(alphas)):
+            alphas[i] += 1.0
+        for i in range(len(betas)):
+            betas[i] += 1.0
+        for i in range(len(gammas)):
+            gammas[i] += 1.0
 
     subplots = 1
 
@@ -117,7 +154,10 @@ def plot_snakes(model: torch.nn.Module, logscale=False):
 
     plt.switch_backend("agg")
     fig, ax = plt.subplots(subplots)
-    plt.tight_layout()
+    plt.tight_layout(pad=0.1)
+    plt.subplots_adjust(
+        top=0.96, bottom=0.04, left=0.04, right=0.98, hspace=0.1, wspace=0.0
+    )
     fig.set_figwidth(12)
     fig.set_figheight(2.5 * subplots)
 
@@ -175,12 +215,26 @@ def plot_weights(model: torch.nn.Module):
 
 def init_weights(m, mean=0.0, std=0.01):
     classname = m.__class__.__name__
-    if classname.find("Conv") != -1:
+    if classname.find("Conv") != -1 or classname.find("Linear") != -1:
         m.weight.data.normal_(mean, std)
+        if hasattr(m, "bias") and m.bias is not None:
+            m.bias.data.normal_(mean, std)
 
 
 def get_padding(kernel_size, dilation=1):
     return int((kernel_size * dilation - dilation) / 2)
+
+
+def get_norm(norm: str) -> Callable[[Module], Module]:
+    match norm:
+        case "weight":
+            return weight_norm
+        case "spectral":
+            return spectral_norm
+        case "none":
+            return noop_norm
+        case _:
+            raise ValueError(f"Unknown norm type: {norm}")
 
 
 class STFT:
@@ -195,8 +249,7 @@ class STFT:
         f_max=16000,
         clip_val=1e-5,
     ):
-        self.target_sr = sample_rate
-
+        self.sample_rate = sample_rate
         self.n_mels = n_mels
         self.n_fft = n_fft
         self.win_size = win_length
@@ -207,28 +260,23 @@ class STFT:
         self.mel_basis = {}
         self.hann_window = torch.hann_window(win_length)
 
-    def get_mel(self, y, center=False):
-        sampling_rate = self.target_sr
-        n_mels = self.n_mels
-        n_fft = self.n_fft
-        win_size = self.win_size
-        hop_length = self.hop_length
-        fmin = self.fmin
-        fmax = self.fmax
-        clip_val = self.clip_val
-
-        mel_basis_key = str(fmax) + "_" + str(y.device)
+    def get_mel(self, y: torch.Tensor, center: bool = False) -> torch.Tensor:
+        mel_basis_key = str(self.fmax) + "_" + str(y.device)
         if mel_basis_key not in self.mel_basis:
             mel = librosa_mel_fn(
-                sr=sampling_rate, n_fft=n_fft, n_mels=n_mels, fmin=fmin, fmax=fmax
+                sr=self.sample_rate,
+                n_fft=self.n_fft,
+                n_mels=self.n_mels,
+                fmin=self.fmin,
+                fmax=self.fmax,
             )
             self.mel_basis[mel_basis_key] = torch.from_numpy(mel).float().to(y.device)
 
         y = torch.nn.functional.pad(
             y.unsqueeze(1),
             (
-                (win_size - hop_length) // 2,
-                (win_size - hop_length + 1) // 2,
+                (self.win_size - self.hop_length) // 2,
+                (self.win_size - self.hop_length + 1) // 2,
             ),
             mode="reflect",
         )
@@ -236,9 +284,9 @@ class STFT:
 
         spec = torch.stft(
             y,
-            n_fft,
-            hop_length=hop_length,
-            win_length=win_size,
+            self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_size,
             window=self.hann_window.to(y.device),
             center=center,
             pad_mode="reflect",
@@ -248,11 +296,64 @@ class STFT:
         ).abs()
 
         spec = torch.matmul(self.mel_basis[mel_basis_key], spec)
-        spec = dynamic_range_compression(spec, clip_val=clip_val)
-        spec *= 0.434294
+        spec = dynamic_range_compression(spec, clip_val=self.clip_val)
+        # spec *= 0.434294
 
         return spec
 
 
-def dynamic_range_compression(x, C=1, clip_val=1e-5):
+def dynamic_range_compression(
+    x: torch.Tensor,
+    C: float = 1.0,
+    clip_val: float = 1e-5,
+) -> torch.Tensor:
     return torch.log(torch.clamp(x, min=clip_val) * C)
+
+
+def noop_norm(module: Module, **kwargs):
+    return module
+
+
+class AutoClip:
+    def __init__(
+        self,
+        percentile: float = 10.0,
+        history_size: int = 1000,
+        max_grad: float | None = 100.0,
+    ) -> None:
+        self.percentile: float = percentile
+        self.history_size: int = history_size
+        self.history = np.empty(history_size, dtype=np.float32)
+        self.history[:] = np.nan
+        self.tail: int = -1
+        self.max_grad: float | None = max_grad
+
+    def __call__(self, x: torch.nn.Module) -> float:
+        if self.tail == -1:
+            if self.max_grad is None:
+                clip_val = 100.0
+            else:
+                clip_val = self.max_grad
+        else:
+            clip_val = np.nanpercentile(self.history, self.percentile)
+
+        if self.max_grad is not None:
+            clip_val = min(clip_val, self.max_grad)
+        grad_norm = (
+            torch.nn.utils.clip_grad_norm_(x.parameters(), clip_val)
+            .detach()
+            .cpu()
+            .numpy()
+        )
+
+        self.tail = (self.tail + 1) if self.tail < self.history_size - 1 else 0
+        self.history[self.tail] = grad_norm
+
+        return clip_val
+
+    def state_dict(self):
+        return {"history": self.history.tolist(), "tail": self.tail}
+
+    def load_state_dict(self, state_dict):
+        self.history = np.array(state_dict["history"], dtype=np.float32)
+        self.tail = state_dict["tail"]

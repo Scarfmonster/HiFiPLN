@@ -9,7 +9,6 @@ import numpy as np
 
 
 def split_segments(audio, length):
-    length *= 1000
     segments = []
     stop = 0
     for i in range(len(audio) // length):
@@ -27,6 +26,8 @@ def process_file(args, files):
         base_name = path.splitext(f)[0]
         audiofile = path.join(root, f)
 
+        target_length = round(args.length * 1000)
+
         if path.exists(path.join(args.output, f"{base_prefix}-{base_name}-000.wav")):
             continue
 
@@ -36,7 +37,7 @@ def process_file(args, files):
         else:
             allaudio = AudioSegment.from_file(audiofile, format="wav")
 
-        if len(allaudio) < args.length * 1000:
+        if len(allaudio) < target_length:
             continue
 
         trimaudio = silence.split_on_silence(
@@ -49,7 +50,7 @@ def process_file(args, files):
 
         trimaudio = sum(trimaudio, start=AudioSegment.empty())
 
-        combined_segments = split_segments(trimaudio, args.length)
+        combined_segments = split_segments(trimaudio, target_length)
 
         for i, segment in enumerate(combined_segments):
             filename = f"{base_prefix}-{base_name}-{i:03d}.wav"
@@ -64,7 +65,7 @@ if __name__ == "__main__":
     freeze_support()
 
     parser = ArgumentParser()
-    parser.add_argument("--length", type=int, default=15)
+    parser.add_argument("--length", type=float, default=15.0)
     parser.add_argument("-ms", "--min-silence", type=int, default=300)
     parser.add_argument("-st", "--silence-tresh", type=float, default=-40.0)
     parser.add_argument("-sr", "--sampling-rate", type=int, default=44100)

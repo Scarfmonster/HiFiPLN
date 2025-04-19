@@ -2,6 +2,8 @@ logs/
 out/
 dataset/
 ckpt/
+.cache/
+setenv.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -127,6 +129,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv-wsl
 env/
 venv/
 ENV/

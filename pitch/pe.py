@@ -1,21 +1,23 @@
 import abc
-from typing import Optional
 
 import librosa
 import numpy as np
 import parselmouth
+import pyreaper
 import pyworld
 import torch
+
+from .rmvpe import RMVPE
 
 
 class BasePE(abc.ABC):
     def __init__(
         self,
-        sample_rate=44100,
-        hop_length=512,
-        f0_min=0,
-        f0_max=22050,
-        keep_zeros=True,
+        sample_rate: int = 44100,
+        hop_length: int = 512,
+        f0_min: int = 0,
+        f0_max: int = 22050,
+        keep_zeros: bool = True,
     ) -> None:
         super().__init__()
         self.sample_rate = sample_rate
@@ -24,7 +26,9 @@ class BasePE(abc.ABC):
         self.f0_max = f0_max
         self.keep_zeros = keep_zeros
 
-    def __call__(self, x: torch.Tensor, pad_to=None):
+    def __call__(
+        self, x: torch.Tensor, pad_to: int | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         f0 = self.process(x)
 
         if isinstance(f0, np.ndarray):
@@ -79,9 +83,9 @@ class BasePE(abc.ABC):
         x: torch.Tensor,
         xp: torch.Tensor,
         fp: torch.Tensor,
-        left: Optional[torch.Tensor] = None,
-        right: Optional[torch.Tensor] = None,
-    ):
+        left: torch.Tensor | None = None,
+        right: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Interpolate a 1-D function.
 
         Args:
@@ -113,18 +117,89 @@ class BasePE(abc.ABC):
 
         return interped
 
-    @abc.abstractclassmethod
-    def process(self, x: torch.Tensor):
+    @classmethod
+    @abc.abstractmethod
+    def process(self, x: torch.Tensor) -> torch.Tensor | np.ndarray:
         raise NotImplementedError
+
+
+class RmvpePE(BasePE):
+    def __init__(
+        self,
+        sample_rate: int = 44100,
+        hop_length: int = 512,
+        f0_min: int = 40,
+        f0_max: int = 1100,
+        keep_zeros: bool = True,
+    ) -> None:
+        super().__init__(sample_rate, hop_length, f0_min, f0_max, keep_zeros=keep_zeros)
+        self.sample_rate = sample_rate
+        self.hop_length = hop_length
+        self.f0_min = f0_min
+        self.f0_max = f0_max
+        self.keep_zeros = keep_zeros
+
+        self.rmvpe = RMVPE("ckpt/rmvpe.pt")
+
+    def process(self, x: torch.Tensor) -> np.ndarray:
+        f0_out = None
+        chunk_length = 600 * self.sample_rate
+        chunk_length = chunk_length - (chunk_length % self.hop_length)
+        chunks = torch.split(x, chunk_length, dim=-1)
+        for c in chunks:
+            length = c.shape[-1] // self.hop_length
+            f0, uv = self.rmvpe.get_pitch(
+                c, self.sample_rate, length, hop_size=self.hop_length
+            )
+            if f0_out is None:
+                f0_out = f0
+            else:
+                f0_out = np.concatenate((f0_out, f0), axis=0)
+
+        return f0_out
+
+
+class ReaperPE(BasePE):
+    def __init__(
+        self,
+        sample_rate: int = 44100,
+        hop_length: int = 512,
+        f0_min: int = 40,
+        f0_max: int = 1100,
+        keep_zeros: bool = True,
+    ) -> None:
+        super().__init__(sample_rate, hop_length, f0_min, f0_max, keep_zeros=keep_zeros)
+
+    def process(self, x: torch.Tensor) -> np.ndarray:
+        x2 = x.cpu().numpy()[0].astype(np.float64)
+        x2 = (x2 * 32768).astype(np.int16)
+
+        pm_times, pm, f0_times, f0, corr = pyreaper.reaper(
+            x2,
+            fs=self.sample_rate,
+            minf0=self.f0_min,
+            maxf0=self.f0_max,
+            frame_period=self.hop_length / self.sample_rate,
+        )
+
+        # Replace -1 values with 0
+        f0[f0 < 0] = 0.0
+
+        return f0
 
 
 class HarvestPE(BasePE):
     def __init__(
-        self, sample_rate=44100, hop_length=512, f0_min=40, f0_max=1100, keep_zeros=True
+        self,
+        sample_rate: int = 44100,
+        hop_length: int = 512,
+        f0_min: int = 40,
+        f0_max: int = 1100,
+        keep_zeros: bool = True,
     ) -> None:
         super().__init__(sample_rate, hop_length, f0_min, f0_max, keep_zeros=keep_zeros)
 
-    def process(self, x: torch.Tensor):
+    def process(self, x: torch.Tensor) -> np.ndarray:
         x2 = x.cpu().numpy()[0].astype(np.float64)
 
         _f0, t = pyworld.harvest(
@@ -142,11 +217,16 @@ class HarvestPE(BasePE):
 
 class DioPE(BasePE):
     def __init__(
-        self, sample_rate=44100, hop_length=512, f0_min=40, f0_max=1100, keep_zeros=True
+        self,
+        sample_rate: int = 44100,
+        hop_length: int = 512,
+        f0_min: int = 40,
+        f0_max: int = 1100,
+        keep_zeros: bool = True,
     ) -> None:
         super().__init__(sample_rate, hop_length, f0_min, f0_max, keep_zeros=keep_zeros)
 
-    def process(self, x: torch.Tensor):
+    def process(self, x: torch.Tensor) -> np.ndarray:
         x2 = x.cpu().numpy()[0].astype(np.float64)
 
         _f0, t = pyworld.dio(
@@ -166,17 +246,17 @@ class DioPE(BasePE):
 class ParselmouthPE(BasePE):
     def __init__(
         self,
-        sample_rate=44100,
-        hop_length=512,
-        f0_min=40,
-        f0_max=1100,
-        keep_zeros=True,
-        very_accurate=True,
+        sample_rate: int = 44100,
+        hop_length: int = 512,
+        f0_min: int = 40,
+        f0_max: int = 1100,
+        keep_zeros: bool = True,
+        very_accurate: bool = True,
     ) -> None:
         super().__init__(sample_rate, hop_length, f0_min, f0_max, keep_zeros=keep_zeros)
         self.very_accurate = very_accurate
 
-    def process(self, x: torch.Tensor):
+    def process(self, x: torch.Tensor) -> np.ndarray:
         x2 = x.cpu().numpy()[0].astype(np.float64)
 
         if self.very_accurate:
@@ -195,7 +275,7 @@ class ParselmouthPE(BasePE):
 
         s = parselmouth.Sound(x2, sampling_frequency=self.sample_rate).to_pitch_ac(
             time_step=self.hop_length / self.sample_rate,
-            voicing_threshold=0.45,
+            voicing_threshold=0.55,
             pitch_floor=self.f0_min,
             pitch_ceiling=self.f0_max,
             very_accurate=self.very_accurate,
@@ -208,11 +288,16 @@ class ParselmouthPE(BasePE):
 
 class PyinPE(BasePE):
     def __init__(
-        self, sample_rate=44100, hop_length=512, f0_min=40, f0_max=1100, keep_zeros=True
+        self,
+        sample_rate: int = 44100,
+        hop_length: int = 512,
+        f0_min: int = 40,
+        f0_max: int = 1100,
+        keep_zeros: bool = True,
     ) -> None:
         super().__init__(sample_rate, hop_length, f0_min, f0_max, keep_zeros=keep_zeros)
 
-    def process(self, x: torch.Tensor):
+    def process(self, x: torch.Tensor) -> np.ndarray:
         x2 = x.cpu().numpy()[0].astype(np.float64)
 
         f0, voiced_flag, voiced_prob = librosa.pyin(
@@ -221,6 +306,8 @@ class PyinPE(BasePE):
             fmax=self.f0_max,
             sr=self.sample_rate,
             frame_length=self.hop_length * 4,
+            win_length=self.hop_length * 2,
+            hop_length=self.hop_length,
             fill_na=0.0,
             center=True,
             pad_mode="reflect",
@@ -231,14 +318,19 @@ class PyinPE(BasePE):
 
 class MixedPE(BasePE):
     def __init__(
-        self, sample_rate=44100, hop_length=512, f0_min=40, f0_max=1100, keep_zeros=True
+        self,
+        sample_rate: int = 44100,
+        hop_length: int = 512,
+        f0_min: int = 40,
+        f0_max: int = 1100,
+        keep_zeros: bool = True,
     ) -> None:
         super().__init__(sample_rate, hop_length, f0_min, f0_max, keep_zeros)
         self.harvest = HarvestPE(sample_rate, hop_length, f0_min, f0_max, keep_zeros)
         self.parsel = ParselmouthPE(sample_rate, hop_length, f0_min, f0_max, keep_zeros)
         self.dio = DioPE(sample_rate, hop_length, f0_min, f0_max, keep_zeros)
 
-    def process(self, x: torch.Tensor):
+    def process(self, x: torch.Tensor) -> np.ndarray:
         f0p, _, _ = self.parsel(x)
         f0h, _, _ = self.harvest(x, pad_to=f0p.shape[-1])
         f0y, _, _ = self.dio(x, pad_to=f0p.shape[-1])

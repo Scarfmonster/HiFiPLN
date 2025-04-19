@@ -1,5 +1,6 @@
 # Adapted from https://github.com/junjun3518/alias-free-torch under the Apache License 2.0
 
+import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from .filter import LowPassFilter1d
@@ -27,16 +28,38 @@ class UpSample1d(nn.Module):
 
     # x: [B, C, T]
     def forward(self, x):
-        x = F.pad(x, (self.pad, self.pad), mode="replicate")
-        x = self.ratio * F.conv_transpose1d(
+        x = upsample1d(
             x,
-            self.filter.expand(self.channels, -1, -1),
-            stride=self.stride,
-            groups=self.channels,
+            self.filter,
+            self.ratio,
+            self.channels,
+            self.stride,
+            self.pad,
+            self.pad_left,
+            self.pad_right,
         )
-        x = x[..., self.pad_left : -self.pad_right]
 
         return x
+
+
+@torch.jit.script_if_tracing
+def upsample1d(
+    x,
+    filter: torch.Tensor,
+    ratio: int,
+    channels: int,
+    stride: int,
+    pad: int,
+    pad_left: int,
+    pad_right: int,
+):
+    x = F.pad(x, (pad, pad), mode="replicate")
+    x = ratio * F.conv_transpose1d(
+        x, filter.expand(channels, -1, -1), stride=stride, groups=channels
+    )
+    x = x[..., pad_left:-pad_right]
+
+    return x
 
 
 class DownSample1d(nn.Module):

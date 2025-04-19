@@ -73,13 +73,32 @@ class LowPassFilter1d(nn.Module):
 
     # input [B, C, T]
     def forward(self, x):
-        if self.padding:
-            x = F.pad(x, (self.pad_left, self.pad_right), mode=self.padding_mode)
-        out = F.conv1d(
+        x = lowpassfilter1d(
             x,
-            self.filter.expand(self.channels, -1, -1),
-            stride=self.stride,
-            groups=self.channels,
+            self.filter,
+            self.channels,
+            self.stride,
+            self.padding,
+            self.pad_left,
+            self.pad_right,
+            self.padding_mode,
         )
+        return x
 
-        return out
+
+@torch.jit.script_if_tracing
+def lowpassfilter1d(
+    x,
+    filter: torch.Tensor,
+    channels: int,
+    stride: int,
+    padding: bool,
+    pad_left: int,
+    pad_right: int,
+    padding_mode: str,
+):
+    if padding:
+        x = F.pad(x, (pad_left, pad_right), mode=padding_mode)
+    x = F.conv1d(x, filter.expand(channels, -1, -1), stride=stride, groups=channels)
+
+    return x

@@ -8,22 +8,43 @@ from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import SingleDeviceStrategy
 from omegaconf import OmegaConf
-from torch.utils.data import DataLoader
+import time
 
-from data import VocoderDataset, collate_fn
+from data import VocoderDataModule
+from progress import CustomProgressBar, CustomSummary
 
-torch.set_float32_matmul_precision("medium")
-torch.backends.cudnn.allow_tf32 = True
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 if __name__ == "__main__":
-    pl.seed_everything(0, workers=True)
-
     argparser = argparse.ArgumentParser()
-    argparser.add_argument("--config", type=str, required=True)
-    argparser.add_argument("--resume", type=str, default=None)
+    argparser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        metavar="CONFIG_FILE",
+        help="Path to the config file.",
+    )
+    argparser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        metavar="CHECKPOINT_PATH",
+        help="Path to the checkpoint to resume from. Can also be a log directory, in which case the last checkpoint of the last training run will be used.",
+    )
+    argparser.add_argument(
+        "--epochs", type=int, default=-1, help="Maximum of epochs to train for."
+    )
+    argparser.add_argument(
+        "--steps", type=int, default=-1, help="Maximum of steps to train for."
+    )
 
     args = argparser.parse_args()
+
+    if args.resume is None:
+        pl.seed_everything(0, workers=True, verbose=True)
+    else:
+        # Set random seed
+        pl.seed_everything(int(time.time()), workers=True, verbose=True)
 
     resume = args.resume
     if resume is not None and os.path.isdir(resume):
@@ -110,7 +131,8 @@ if __name__ == "__main__":
     trainer = pl.Trainer(
         accelerator="gpu",
         devices=-1,
-        max_epochs=-1,
+        max_epochs=args.epochs,
+        max_steps=args.steps,
         precision=config.precision,
         val_check_interval=config.val_check,
         check_val_every_n_epoch=None,
@@ -119,10 +141,14 @@ if __name__ == "__main__":
             ModelCheckpoint(
                 filename="epoch={epoch}-step={step}-loss={valid/loss:.4}",
                 save_on_train_epoch_end=False,
-                save_top_k=-1,
+                save_top_k=5,
+                monitor="step",
+                mode="max",
                 auto_insert_metric_name=False,
             ),
             LearningRateMonitor(logging_interval="step"),
+            CustomProgressBar(refresh_rate=1, leave=True),
+            CustomSummary(),
         ],
         strategy=SingleDeviceStrategy(device=device),
         # detect_anomaly=True,
@@ -130,43 +156,31 @@ if __name__ == "__main__":
         # benchmark=True,
         deterministic=False,
     )
+    with trainer.init_module():
+        match config.type:
+            case "HiFiGan":
+                from model.hifigan.trainer import HiFiGanTrainer
 
-    match config.type:
-        case "HiFiGan":
-            from model.hifigan.trainer import HiFiGanTrainer
+                model = HiFiGanTrainer(config)
+            case "HiFiPLNv1":
+                from model.hifiplnv1.trainer import HiFiPlnTrainer
 
-            model = HiFiGanTrainer(config)
-        case "HiFiPLNv1":
-            from model.hifiplnv1.trainer import HiFiPlnTrainer
+                model = HiFiPlnTrainer(config)
+            case "HiFiPLNv2":
+                from model.hifiplnv2.trainer import HiFiPlnV2Trainer
 
-            model = HiFiPlnTrainer(config)
-        case "DDSP":
-            from model.ddsp.trainer import DDSPTrainer
+                model = HiFiPlnV2Trainer(config, resume is not None)
+            case "SinSum":
+                from model.sinsum.trainer import SinSumTrainer
 
-            model = DDSPTrainer(config)
+                model = SinSumTrainer(config, resume is not None)
+            case "DDSP":
+                from model.ddsp.trainer import DDSPTrainer
 
-    train_dataset = VocoderDataset(config, "train")
-    valid_dataset = VocoderDataset(config, "valid")
+                model = DDSPTrainer(config)
+            case _:
+                raise ValueError(f"Unknown model type: {config.type}")
 
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=config.dataloader.train.batch_size,
-        shuffle=config.dataloader.train.shuffle,
-        num_workers=config.dataloader.train.num_workers,
-        pin_memory=config.dataloader.train.pin_memory,
-        drop_last=config.dataloader.train.drop_last,
-        persistent_workers=config.dataloader.train.persistent_workers,
-        collate_fn=collate_fn,
-    )
-    valid_dataloader = DataLoader(
-        valid_dataset,
-        batch_size=config.dataloader.valid.batch_size,
-        shuffle=config.dataloader.valid.shuffle,
-        num_workers=config.dataloader.valid.num_workers,
-        pin_memory=config.dataloader.valid.pin_memory,
-        drop_last=config.dataloader.valid.drop_last,
-        persistent_workers=config.dataloader.valid.persistent_workers,
-        collate_fn=collate_fn,
-    )
+    dataset = VocoderDataModule(config)
 
-    trainer.fit(model, train_dataloader, valid_dataloader, ckpt_path=resume)
+    trainer.fit(model, dataset, ckpt_path=resume)

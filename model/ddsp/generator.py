@@ -16,8 +16,10 @@ class DDSP(nn.Module):
         config (DictConfig): Configuration dictionary.
     """
 
-    def __init__(self, config: DictConfig, layers=3) -> None:
+    def __init__(self, config: DictConfig, layers=3, inputs=None) -> None:
         super().__init__()
+
+        self.inputs = inputs if inputs is not None else config.n_mels
 
         self.sample_rate = config.sample_rate
         self.n_mels = config.n_mels
@@ -37,7 +39,7 @@ class DDSP(nn.Module):
             "noise_magnitude": self.win_length // 2 + 1,
         }
 
-        self.mel2ctrl = Mel2Control(self.n_mels, split_map, layers=layers)
+        self.mel2ctrl = Mel2Control(self.inputs, split_map, layers=layers)
 
     def forward(self, mel_frames, f0_frames, max_upsample_dim=32):
         """

@@ -23,16 +23,27 @@ class VUVEstimator:
 
         vuv = 1 - (np.ones_like(ap) * (ap > 0.5))
 
+        vuv = self.clean_vuv(vuv)
+
+        return vuv
+
+    def clean_vuv(self, vuv):
+        if self.vuv_smoothing > 1:
+            for i in range(2, self.vuv_smoothing + 1):
+                vuv = self.smooth(vuv, i)
+
         if self.oversampling > 1:
             vuv = np.interp(
                 np.linspace(0, np.max(vuv), len(vuv) // self.oversampling),
                 np.linspace(0, np.max(vuv), len(vuv)),
                 vuv,
             )
-            vuv = np.ones_like(vuv) * (vuv >= 0.5)
 
-        for s in range(1, self.vuv_smoothing + 1):
-            self.smooth(vuv, s)
+        return vuv
+
+    def from_f0(self, f0):
+        vuv = f0 > 0
+        vuv = self.clean_vuv(vuv)
 
         return vuv
 
@@ -79,12 +90,7 @@ class VUVEstimator:
 
     @staticmethod
     def smooth(arr, s):
-        org_len = len(arr)
-        arr = np.pad(arr, s, "reflect")
-        for i in range(s - 1, org_len - s):
-            m = np.mean(np.concatenate((arr[i - s : i], arr[i + 1 : i + s + 1])))
-            if m > 0.5:
-                arr[i] = 1
-            elif m < 0.5:
-                arr[i] = 0
-        return arr[s:-s]
+        arr = np.pad(arr, s // 2, "reflect")
+        arr = np.convolve(arr, np.ones(s), mode="valid") / s
+        arr = np.where(arr > 0.5, 1, 0)
+        return arr

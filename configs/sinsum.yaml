@@ -1,0 +1,137 @@
+type: "SinSum"
+precision: "32"
+val_check: 10000
+sample_rate: 44100
+f_min: 40
+f_max: 16000
+n_mels: 128
+hop_length: 512
+win_length: 2048
+n_fft: 2048
+stft_resolutions: [[2048, 240, 1200], [1024, 120, 600], [512, 50, 240]] # (filter_length, hop_length, win_length)
+log_accuracy: False
+optimizer:
+  type: "AdamW"
+  lr: 0.0002
+  lr_decay: 1.0
+  lr_decay_steps: 44299
+  adam_b1: 0.8
+  adam_b2: 0.99
+  momentum: 0.9
+  clip_percentile: 10.0
+  clip_history: 10000
+  clip_max: Null
+uv_detach_step: 100000
+uv_tolerance: 0.05
+input_noise: 0.0
+dropout: 0.0
+loss_scale:
+  stft: 1.0
+  mel: 1.0
+  envelope: 0.0
+  symmetry: 0.0
+  weight: 0.01
+  uv: 1.0
+  clipping: 1.0
+dataset:
+  train:
+    path: "dataset/train"
+    segment_length: 16384 #32768 16384
+    pitch_shift: [-12, 6]
+    pitch_shift_prob: 0.5
+    loudness_shift: [0.1, 0.9]
+    loudness_shift_prob: 0.5
+    hap_shift: Null
+    hap_shift_prob: 0.0
+    reverse_prob: Null
+    return_vuv: True
+    return_original: True
+    separate_sp_ap: False
+  valid:
+    path: "dataset/valid"
+    segment_length: Null
+    pitch_shift: Null
+    pitch_shift_prob: 0.0
+    loudness_shift: Null
+    loudness_shift_prob: 0.0
+    hap_shift: Null
+    hap_shift_prob: 0.0
+    reverse_prob: Null
+    return_vuv: False
+    separate_sp_ap: True
+dataloader:
+  train:
+    batch_size: 8
+    shuffle: True
+    num_workers: 4
+    pin_memory: True
+    drop_last: True
+    persistent_workers: True
+    prefetch_factor: 2
+  valid:
+    batch_size: 2
+    shuffle: False
+    num_workers: 2
+    pin_memory: True
+    drop_last: True
+    persistent_workers: True
+    prefetch_factor: 1
+norm:
+  normalize: True
+  mel_mean: [-6.1735, -5.7469, -5.0244, -4.3745, -4.1310, -3.8508, -3.5656, -3.7405,
+             -3.7338, -3.5126, -3.7134, -3.7203, -3.5512, -3.7124, -3.7804, -3.6277,
+             -3.7120, -3.9114, -3.9202, -3.9665, -4.1816, -4.1612, -4.0916, -4.3309,
+             -4.3525, -4.1873, -4.4515, -4.4993, -4.3483, -4.5228, -4.6110, -4.4890,
+             -4.5489, -4.6387, -4.4792, -4.6478, -4.6412, -4.7164, -4.7110, -4.8566,
+             -4.8078, -4.8850, -4.8485, -4.8436, -4.8725, -4.8478, -4.8441, -4.7992,
+             -4.7795, -4.7969, -4.8350, -4.8536, -4.7935, -4.9100, -4.9270, -5.0187,
+             -4.9798, -5.0604, -5.0602, -5.0660, -5.0660, -5.0379, -4.9948, -4.9914,
+             -4.9480, -4.9332, -4.8517, -4.8576, -4.8461, -4.8788, -4.9187, -4.9807,
+             -5.0164, -5.0997, -5.1298, -5.1909, -5.1922, -5.2622, -5.3130, -5.3819,
+             -5.4567, -5.5698, -5.6611, -5.7742, -5.8819, -5.9710, -6.0386, -6.1088,
+             -6.1579, -6.2034, -6.2173, -6.2609, -6.2768, -6.3057, -6.3046, -6.2924,
+             -6.2411, -6.2043, -6.1843, -6.1780, -6.1877, -6.2106, -6.2369, -6.2798,
+             -6.3244, -6.3789, -6.4232, -6.4887, -6.5523, -6.5924, -6.6332, -6.6896,
+             -6.7495, -6.8192, -6.8894, -6.9718, -7.0610, -7.1510, -7.2397, -7.3298,
+             -7.4051, -7.4818, -7.5671, -7.6516, -7.7314, -7.8232, -7.9126, -7.9859]
+  mel_std: [1.2338, 1.3296, 1.4393, 1.5478, 1.6268, 1.6546, 1.6944, 1.7436,
+            1.7565, 1.7534, 1.7740, 1.7868, 1.7871, 1.7930, 1.8055, 1.8088,
+            1.8220, 1.8367, 1.8352, 1.8399, 1.8583, 1.8603, 1.8502, 1.8532,
+            1.8512, 1.8339, 1.8300, 1.8156, 1.8009, 1.7965, 1.7929, 1.7850,
+            1.7976, 1.8081, 1.7952, 1.8020, 1.7966, 1.7951, 1.7969, 1.7901,
+            1.7796, 1.7772, 1.7760, 1.7736, 1.7690, 1.7682, 1.7747, 1.7654,
+            1.7591, 1.7411, 1.7267, 1.7173, 1.7059, 1.6920, 1.6689, 1.6561,
+            1.6453, 1.6242, 1.6092, 1.5950, 1.5904, 1.5834, 1.5902, 1.5876,
+            1.5930, 1.6007, 1.6116, 1.6113, 1.6144, 1.6089, 1.6085, 1.5974,
+            1.5925, 1.5767, 1.5685, 1.5627, 1.5651, 1.5537, 1.5457, 1.5328,
+            1.5251, 1.5045, 1.4886, 1.4685, 1.4559, 1.4404, 1.4367, 1.4328,
+            1.4350, 1.4380, 1.4405, 1.4326, 1.4303, 1.4239, 1.4221, 1.4182,
+            1.4119, 1.4048, 1.4037, 1.4019, 1.4050, 1.4075, 1.4093, 1.4161,
+            1.4204, 1.4186, 1.4158, 1.4142, 1.4131, 1.4113, 1.4087, 1.4056,
+            1.4023, 1.3964, 1.3884, 1.3805, 1.3707, 1.3585, 1.3452, 1.3299,
+            1.3150, 1.2984, 1.2802, 1.2618, 1.2460, 1.2218, 1.1789, 1.1147]
+  pitch_mean: 244.7184
+  pitch_std: 24.8730
+model:
+  compile: True
+  max_autotune: False
+  harmonic_num: 128
+  noise_num: 128
+  max_upsample_dim: 8
+  encoder_layers: 3
+  encoder_hidden: 256
+  norm: "weight"
+  filter_lowpass: False
+  filter_highpass: False
+preprocessing:
+  threads: 4
+  f0_min: 40
+  f0_max: 2200
+  pitch_extractor:
+    name: "RmvpePE"
+    keep_zeros: False
+  separate_sp_ap: False
+  vuv: True
+  vuv_from_f0: True
+  vuv_smoothing: 5
+  oversampling: 4
