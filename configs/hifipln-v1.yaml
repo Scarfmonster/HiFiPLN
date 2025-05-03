@@ -21,16 +21,26 @@ dataset:
     path: "dataset/train"
     segment_length: 16384
     pitch_shift: [-12, 12]
+    pitch_shift_prob: 1.0
     loudness_shift: [0.25, 1.0]
+    loudness_shift_prob: 1.0
+    hap_shift: Null
+    hap_shift_prob: 0.0
     reverse_prob: Null
     return_vuv: True
+    separate_sp_ap: False
   valid:
     path: "dataset/valid"
     segment_length: Null
     pitch_shift: Null
+    pitch_shift_prob: 0.0
     loudness_shift: Null
+    loudness_shift_prob: 0.0
+    hap_shift: Null
+    hap_shift_prob: 0.0
     reverse_prob: Null
     return_vuv: True
+    separate_sp_ap: False
 dataloader:
   train:
     batch_size: 12
@@ -39,6 +49,7 @@ dataloader:
     pin_memory: True
     drop_last: True
     persistent_workers: True
+    prefetch_factor: 8
   valid:
     batch_size: 4
     shuffle: False
@@ -46,19 +57,20 @@ dataloader:
     pin_memory: True
     drop_last: True
     persistent_workers: True
+    prefetch_factor: 4
 model:
   snake_log: True
   snake_upsample: False
   upsample_rates: [8, 8, 2, 2, 2]
   upsample_kernels: [16, 16, 4, 4, 4]
   upsample_initial: 512
-  kernel_sizes : [3, 7, 11]
+  kernel_sizes: [3, 7, 11]
   dilation_sizes:
     - [1, 3, 5]
     - [1, 3, 5]
     - [1, 3, 5]
 mpd:
-  periods:  [2, 3, 5, 7, 11, 17, 23, 37]
+  periods: [2, 3, 5, 7, 11, 17, 23, 37]
   kernel_size: 5
   stride: 3
   lrelu_slope: 0.1
