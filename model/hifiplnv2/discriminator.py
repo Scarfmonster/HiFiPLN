@@ -3,10 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from nnAudio.features.cqt import CQT2010v2
 from omegaconf import DictConfig
-
-from ..utils import get_norm, init_weights
-from ..act import Swish
 from torchaudio.transforms import Resample
+
+from ..act import Swish
+from ..utils import get_norm, init_weights
 
 
 class DiscriminatorP(nn.Module):
@@ -74,7 +74,7 @@ class DiscriminatorP(nn.Module):
                 case "Swish":
                     self.activations.append(Swish(c.out_channels, dim=1, d2d=True))
                 case "GELU":
-                    self.activations.append(nn.GELU())
+                    self.activations.append(nn.GELU(approximate="tanh"))
                 case _:
                     raise ValueError(f"Unknown activation: {self.activation}")
 
@@ -196,7 +196,7 @@ class DiscriminatorQ(nn.Module):
                 case "Swish":
                     self.activations.append(Swish(c.out_channels, dim=1, d2d=True))
                 case "GELU":
-                    self.activations.append(nn.GELU())
+                    self.activations.append(nn.GELU(approximate="tanh"))
                 case _:
                     raise ValueError(f"Unknown activation: {self.activation}")
 

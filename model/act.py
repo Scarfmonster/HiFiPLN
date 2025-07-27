@@ -48,7 +48,7 @@ class GeGLU(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x, y = x.chunk(2, dim=self.dim)
-        return x * nn.functional.gelu(y)
+        return x * nn.functional.gelu(y, approximate="tanh")
 
 
 def snake_gamma(

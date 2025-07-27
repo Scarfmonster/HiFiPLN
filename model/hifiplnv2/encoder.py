@@ -67,7 +67,7 @@ class Decoder(nn.Module):
             case "Swish":
                 activation = Swish(self.decoder_hidden * 2, dim=1)
             case "GELU":
-                activation = nn.GELU()
+                activation = nn.GELU(approximate="tanh")
             case "ReLU":
                 activation = nn.LeakyReLU(0.1, inplace=True)
             case _:
@@ -157,7 +157,7 @@ class EncoderLayer(nn.Module):
             case "Swish":
                 activation_conv = Swish(hidden * 2, dim=1)
             case "GELU":
-                activation_conv = nn.GELU()
+                activation_conv = nn.GELU(approximate="tanh")
             case "ReLU":
                 activation_conv = nn.LeakyReLU(0.1, inplace=True)
             case _:

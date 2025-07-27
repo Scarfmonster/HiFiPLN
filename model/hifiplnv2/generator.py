@@ -118,7 +118,7 @@ class HiFiPLNv2(nn.Module):
             case "ReLU":
                 self.post_act = nn.LeakyReLU(0.1)
             case "GELU":
-                self.post_act = nn.GELU()
+                self.post_act = nn.GELU(approximate="tanh")
             case _:
                 raise ValueError(f"Unknown activation: {self.activation}")
 
