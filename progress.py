@@ -1,5 +1,3 @@
-from typing import Dict
-
 import lightning.pytorch as pl
 from lightning.pytorch.callbacks import RichModelSummary
 from lightning.pytorch.callbacks.progress.rich_progress import (
@@ -35,6 +33,8 @@ class CustomProgressBar(RichProgressBar):
             metrics_format=".3f",
         )
 
+        self.handled_resume = False
+
     # Only needed to make resuming work after lightning v2.5.0
     def on_train_batch_end(
         self,
@@ -51,6 +51,19 @@ class CustomProgressBar(RichProgressBar):
                 total_batches, train_description
             )
         super().on_train_batch_end(trainer, pl_module, outputs, batch, batch_idx)
+
+        if (
+            hasattr(pl_module, "resume")
+            and pl_module.resume
+            and not self.handled_resume
+        ):
+            self.handled_resume = True
+            self.progress.reset(
+                self.train_progress_bar_id,
+                total=self.total_train_batches,
+                completed=batch_idx,
+                description=self._get_train_description(trainer.current_epoch),
+            )
 
     def configure_columns(self, trainer: pl.Trainer) -> list:
         return [
@@ -80,7 +93,7 @@ class CustomProgressBar(RichProgressBar):
 
     def get_metrics(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
-    ) -> Dict[str, int | str | float | Dict[str, float]]:
+    ) -> dict[str, int | str | float | dict[str, float]]:
         items = super().get_metrics(trainer, pl_module)
         items.pop("v_num", None)
 
