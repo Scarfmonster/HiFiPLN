@@ -9,9 +9,10 @@ from lightning import LightningDataModule
 from natsort import os_sorted
 from omegaconf import DictConfig
 from torch.nn.functional import interpolate
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 from torchaudio.functional import highpass_biquad
 from torchaudio.transforms import MelSpectrogram
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 
 class VocoderDataModule(LightningDataModule):
@@ -19,34 +20,52 @@ class VocoderDataModule(LightningDataModule):
         super().__init__()
         self.config = config
 
-    def setup(self, stage: str | None = None) -> None:
-        self.train_dataset = VocoderDataset(self.config, "train")
-        self.val_dataset = VocoderDataset(self.config, "valid")
+    def train_dataloader(self) -> StatefulDataLoader:
+        if not hasattr(self, "_train_dataset"):
+            self._train_dataset = VocoderDataset(self.config, "train")
+        if not hasattr(self, "_train_dataloader"):
+            self._train_dataloader = StatefulDataLoader(
+                self._train_dataset,
+                batch_size=self.config.dataloader.train.batch_size,
+                shuffle=self.config.dataloader.train.shuffle,
+                num_workers=self.config.dataloader.train.num_workers,
+                pin_memory=self.config.dataloader.train.pin_memory,
+                drop_last=self.config.dataloader.train.drop_last,
+                persistent_workers=self.config.dataloader.train.persistent_workers,
+                prefetch_factor=self.config.dataloader.train.prefetch_factor,
+                collate_fn=collate_fn,
+            )
+        return self._train_dataloader
 
-    def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.config.dataloader.train.batch_size,
-            shuffle=self.config.dataloader.train.shuffle,
-            num_workers=self.config.dataloader.train.num_workers,
-            pin_memory=self.config.dataloader.train.pin_memory,
-            drop_last=self.config.dataloader.train.drop_last,
-            persistent_workers=self.config.dataloader.train.persistent_workers,
-            prefetch_factor=self.config.dataloader.train.prefetch_factor,
-            collate_fn=collate_fn,
-        )
+    def val_dataloader(self) -> StatefulDataLoader:
+        if not hasattr(self, "_val_dataset"):
+            self._val_dataset = VocoderDataset(self.config, "valid")
+        if not hasattr(self, "_val_dataloader"):
+            self._val_dataloader = StatefulDataLoader(
+                self._val_dataset,
+                batch_size=self.config.dataloader.valid.batch_size,
+                shuffle=self.config.dataloader.valid.shuffle,
+                num_workers=self.config.dataloader.valid.num_workers,
+                pin_memory=self.config.dataloader.valid.pin_memory,
+                drop_last=self.config.dataloader.valid.drop_last,
+                persistent_workers=self.config.dataloader.valid.persistent_workers,
+                prefetch_factor=self.config.dataloader.valid.prefetch_factor,
+                collate_fn=collate_fn,
+            )
+        return self._val_dataloader
 
-    def val_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.config.dataloader.valid.batch_size,
-            shuffle=self.config.dataloader.valid.shuffle,
-            num_workers=self.config.dataloader.valid.num_workers,
-            pin_memory=self.config.dataloader.valid.pin_memory,
-            drop_last=self.config.dataloader.valid.drop_last,
-            persistent_workers=self.config.dataloader.valid.persistent_workers,
-            collate_fn=collate_fn,
-        )
+    def state_dict(self) -> dict:
+        return {
+            "train_dataloader": self.train_dataloader().state_dict(),
+            "val_dataloader": self.val_dataloader().state_dict(),
+        }
+
+    def load_state_dict(self, state_dict: dict) -> None:
+        self.train_dataloader().load_state_dict(state_dict["train_dataloader"])
+        print("Restored train dataloader state")
+
+        self.val_dataloader().load_state_dict(state_dict["val_dataloader"])
+        print("Restored val dataloader state")
 
 
 class VocoderDataset(Dataset):

@@ -1,6 +1,7 @@
 import argparse
 import os
 import re
+import time
 
 import lightning as pl
 import torch
@@ -8,7 +9,6 @@ from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import SingleDeviceStrategy
 from omegaconf import OmegaConf
-import time
 
 from data import VocoderDataModule
 from progress import CustomProgressBar, CustomSummary
@@ -181,6 +181,9 @@ if __name__ == "__main__":
             case _:
                 raise ValueError(f"Unknown model type: {config.type}")
 
-    dataset = VocoderDataModule(config)
+    if resume is not None:
+        dataset = VocoderDataModule.load_from_checkpoint(resume, config=config)
+    else:
+        dataset = VocoderDataModule(config)
 
     trainer.fit(model, dataset, ckpt_path=resume)
