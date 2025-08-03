@@ -11,8 +11,7 @@ from alias.act import Activation1d
 
 from ..act import ReSnake, SnakeGamma, Swish
 from ..common import f0_to_phase, normalize
-from ..layers import ActivationBlock, SmoothUpsample1D
-from ..stft import STFT
+from ..layers import ActivationBlock
 from ..utils import get_norm, init_weights
 from .encoder import Decoder, Encoder
 
