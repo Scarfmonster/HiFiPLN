@@ -97,14 +97,16 @@ class DDSPTrainer(pl.LightningModule):
             optim_g = self.optimizers()
             current_step = self.global_step
 
-        pitches, audio, vuv = (
+        pitches, audio, audio_org, vuv = (
             batch["pitch"].float(),
             batch["audio"].float(),
+            batch["audio_org"].float(),
             batch["vuv"].float(),
         )
 
         mel_lens = batch["audio_lens"] // self.config["hop_length"]
         mels = self.get_mels(audio)[:, :, : mel_lens.max()]
+        mels_org = self.get_mels(audio_org)[:, :, : mel_lens.max()]
         gen_mels = mels + torch.rand_like(mels) * self.config.model.input_noise
         gen_audio, (harmonic, noise) = self.generator(gen_mels, pitches)
 
@@ -112,8 +114,8 @@ class DDSPTrainer(pl.LightningModule):
         optim_g.zero_grad(set_to_none=True)
 
         if self.config.use_discriminator:
-            real_mpd = self.mpd(audio)
-            real_mrd = self.mrd(audio)
+            real_mpd = self.mpd(audio_org)
+            real_mrd = self.mrd(audio_org)
             gen_mpd = self.mpd(gen_audio)
             gen_mrd = self.mrd(gen_audio)
 
@@ -136,7 +138,7 @@ class DDSPTrainer(pl.LightningModule):
             mels = self.get_mels(audio)[:, :, : mel_lens.max()]
             gen_audio_mel = self.get_mels(gen_audio)[:, :, : mel_lens.max()]
 
-            loss_mel = F.l1_loss(mels, gen_audio_mel)
+            loss_mel = F.l1_loss(mels_org, gen_audio_mel)
 
             loss_gen = gen_loss + feat_loss + loss_mel
 
@@ -171,7 +173,7 @@ class DDSPTrainer(pl.LightningModule):
             )
 
         else:
-            loss_gen = self.ddsp_loss(audio, gen_audio)
+            loss_gen = self.ddsp_loss(audio_org, gen_audio)
             self.log(
                 f"train/loss_stft",
                 loss_gen,

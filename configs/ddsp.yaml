@@ -18,18 +18,31 @@ use_discriminator: False
 dataset:
   train:
     path: "dataset/train"
-    segment_length: 32768
+    segment_length: 44032
     pitch_shift: [-12, 12]
-    loudness_shift: [0.5, 1.0]
+    pitch_shift_prob: 1.0
+    pitch_shifter: "RosaShifter"
+    shift_f0: False
+    loudness_shift: [0.1, 0.9]
+    loudness_shift_prob: 1.0
+    hap_shift: Null
+    hap_shift_prob: 0.0
     reverse_prob: Null
     return_vuv: True
+    return_original: True
+    separate_sp_ap: False
   valid:
     path: "dataset/valid"
     segment_length: Null
     pitch_shift: Null
+    pitch_shift_prob: 0.0
     loudness_shift: Null
+    loudness_shift_prob: 0.0
+    hap_shift: Null
+    hap_shift_prob: 0.0
     reverse_prob: Null
     return_vuv: True
+    separate_sp_ap: False
 dataloader:
   train:
     batch_size: 32
@@ -38,6 +51,7 @@ dataloader:
     pin_memory: True
     drop_last: True
     persistent_workers: True
+    prefetch_factor: 2
   valid:
     batch_size: 4
     shuffle: False
@@ -45,6 +59,7 @@ dataloader:
     pin_memory: True
     drop_last: True
     persistent_workers: True
+    prefetch_factor: 1
 model:
   input_noise: 0.0
 mpd:
